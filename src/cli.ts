@@ -92,7 +92,11 @@ async function main(): Promise<void> {
     if (cfg.showValues) console.log("--show-values is on: the viewer shows packet values.");
     if (ravn) {
       const stages = cfg.answerStages.length ? cfg.answerStages.join(", ") : "none";
-      console.log(`as a service account on ${cfg.ravnUrl}: answering ${stages}; reading over MCP`);
+      const { state, code } = ravn.status();
+      console.log(
+        `service account on ${cfg.ravnUrl}: ${state}${code ? ` (${code})` : ""}; ` +
+          `answers ${stages}; reads over MCP`,
+      );
     } else {
       console.log("no service account: receiving only (set RAVN_UNWRAP_TOKEN to answer)");
     }

@@ -189,14 +189,14 @@ export class McpReader {
 
 /**
  * Ravn's refusals carry a code word as the JSON-RPC message (`not_bound`,
- * `no_identity`, `unavailable`). Any other error's message can quote an
+ * `no_identity`, `Unauthorized`). Any other error's message can quote an
  * argument, and an argument came from the packet, so only its number is kept.
  */
 function rpcCode(error: { code?: unknown; message?: unknown }): string {
-  if (typeof error.message === "string" && /^[a-z_]{1,40}$/.test(error.message)) {
-    return error.message;
+  if (typeof error.message === "string" && /^[A-Za-z_]{1,40}$/.test(error.message)) {
+    return error.message.toLowerCase();
   }
-  return `jsonrpc-${typeof error.code === "number" ? error.code : "error"}`;
+  return `jsonrpc ${typeof error.code === "number" ? error.code : "error"}`;
 }
 
 /**
