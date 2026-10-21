@@ -41,10 +41,11 @@ jobs:
       - name: test
         run: pnpm run test
 
-      # The vendored schema equals the one published at its $id. Not strict
-      # until the schema is publicly served.
+      # The vendored schema equals the one published at its $id, byte for byte.
       - name: schema in sync with the published one
         run: pnpm run check:schema-sync
+        env:
+          SCHEMA_SYNC_STRICT: "1"
 
       - name: container build
         run: docker build -t ravn-hook-echo:ci .

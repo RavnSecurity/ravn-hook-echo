@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ravnsecurity.io/schema/stage-contract.v1.json",
   "title": "Ravn stage contract v1",
-  "description": "Seven triage stages, one envelope. What a plugged stage receives from Ravn, and the shape of each stage's output. No report body, PoC or attachment, ever; no reporter score, rank, priority or reputation; every empty value names why. ADR platform-007.",
+  "description": "Seven triage stages, one envelope. What a stage sent to a hook receives from Ravn, the shape of each stage's output, and the answer a hook that may answer sends back (*Answer). No report body, PoC or attachment, ever; no reporter score, rank, priority or reputation; every empty value names why. ADR platform-007.",
   "$defs": {
     "Maybe": {
       "description": "Every empty value names why. Present: { value } with a non-null value. Absent: { value: null, reason }. A bare null, {} or [] never validates.",
@@ -58,7 +58,7 @@
       ]
     },
     "Impl": {
-      "description": "What ran, or will: Ravn's built-in at a pinned version, a plug, or nothing yet.",
+      "description": "What ran, or will: Ravn's built-in at a pinned version, a hook, or nothing yet.",
       "oneOf": [
         {
           "type": "object",
@@ -86,16 +86,16 @@
           "type": "object",
           "properties": {
             "kind": {
-              "const": "plug"
+              "const": "hook"
             },
-            "plugId": {
+            "hookId": {
               "type": "string",
               "minLength": 1
             }
           },
           "required": [
             "kind",
-            "plugId"
+            "hookId"
           ],
           "additionalProperties": false
         },
@@ -114,9 +114,13 @@
       ]
     },
     "Envelope": {
-      "description": "The one shape every stage receives, built-in or plug. `packet` is the stage's In; see the per-stage *Envelope definitions for the narrowing.",
+      "description": "The one shape every stage receives, built-in or hook. `packet` is the stage's In; see the per-stage *Envelope definitions for the narrowing.",
       "type": "object",
       "properties": {
+        "$schema": {
+          "const": "https://ravnsecurity.io/schema/stage-contract.v1.json",
+          "description": "The published schema this envelope validates against — the document's own $id. Optional because it arrived additively (#640); Ravn always sets it."
+        },
         "contract": {
           "const": 1
         },
@@ -1101,6 +1105,29 @@
         }
       ]
     },
+    "ClassifyAnswer": {
+      "description": "What a hook sends back for Classify: the run it was sent and the stage's output. Recorded as the stage's output; never acted on.",
+      "type": "object",
+      "properties": {
+        "stageRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "out": {
+          "$ref": "#/$defs/ClassifyOut"
+        }
+      },
+      "required": [
+        "stageRunId",
+        "attempt",
+        "out"
+      ],
+      "additionalProperties": false
+    },
     "RouteIn": {
       "type": "object",
       "properties": {
@@ -1322,6 +1349,29 @@
         }
       ]
     },
+    "RouteAnswer": {
+      "description": "What a hook sends back for Route: the run it was sent and the stage's output. Recorded as the stage's output; never acted on.",
+      "type": "object",
+      "properties": {
+        "stageRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "out": {
+          "$ref": "#/$defs/RouteOut"
+        }
+      },
+      "required": [
+        "stageRunId",
+        "attempt",
+        "out"
+      ],
+      "additionalProperties": false
+    },
     "AssessIn": {
       "type": "object",
       "properties": {
@@ -1484,7 +1534,7 @@
       "type": "object",
       "properties": {
         "proposed": {
-          "description": "Assess never proposes from metadata: not-proposed when the tool gathered and judged nothing (#652). A plug that reads the report may fill the value.",
+          "description": "Assess never proposes from metadata: not-proposed when the tool gathered and judged nothing (#652). A hook that reads the report may fill the value.",
           "allOf": [
             {
               "$ref": "#/$defs/Maybe"
@@ -1601,6 +1651,29 @@
           }
         }
       ]
+    },
+    "AssessAnswer": {
+      "description": "What a hook sends back for Assess: the run it was sent and the stage's output. Recorded as the stage's output; never acted on.",
+      "type": "object",
+      "properties": {
+        "stageRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "out": {
+          "$ref": "#/$defs/AssessOut"
+        }
+      },
+      "required": [
+        "stageRunId",
+        "attempt",
+        "out"
+      ],
+      "additionalProperties": false
     },
     "ReviewIn": {
       "type": "object",
@@ -1769,6 +1842,29 @@
         }
       ]
     },
+    "ReviewAnswer": {
+      "description": "What a hook sends back for Review: the run it was sent and the stage's output. Recorded as the stage's output; never acted on.",
+      "type": "object",
+      "properties": {
+        "stageRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "out": {
+          "$ref": "#/$defs/ReviewOut"
+        }
+      },
+      "required": [
+        "stageRunId",
+        "attempt",
+        "out"
+      ],
+      "additionalProperties": false
+    },
     "FollowUpIn": {
       "type": "object",
       "properties": {
@@ -1878,6 +1974,33 @@
         }
       ]
     },
+    "FollowUpAnswer": {
+      "description": "What a hook sends back for FollowUp: the run it was sent and the stage's output. Recorded as the stage's output; never acted on.",
+      "type": "object",
+      "properties": {
+        "stageRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "out": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FollowUpOut"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "stageRunId",
+        "attempt",
+        "out"
+      ],
+      "additionalProperties": false
+    },
     "KnowledgeIn": {
       "type": "object",
       "properties": {
@@ -1894,8 +2017,10 @@
       "type": "object",
       "properties": {
         "precedentId": {
+          "description": "The knowledge entry's id. From a hook, its own reference: opaque, at most 200 characters, recorded and never resolved by Ravn.",
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "maxLength": 200
         },
         "scope": {
           "enum": [
@@ -1904,7 +2029,7 @@
           ]
         },
         "reviewer": {
-          "description": "Who reviewed, when a plug at Knowledge can name a person: not-observed when Review named only the source (#656).",
+          "description": "Who reviewed, when a hook at Knowledge can name a person: not-observed when Review named only the source (#656).",
           "allOf": [
             {
               "$ref": "#/$defs/Maybe"
@@ -1952,6 +2077,29 @@
           }
         }
       ]
+    },
+    "KnowledgeAnswer": {
+      "description": "What a hook sends back for Knowledge: the run it was sent and the stage's output. Recorded as the stage's output; never acted on.",
+      "type": "object",
+      "properties": {
+        "stageRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "out": {
+          "$ref": "#/$defs/KnowledgeOut"
+        }
+      },
+      "required": [
+        "stageRunId",
+        "attempt",
+        "out"
+      ],
+      "additionalProperties": false
     }
   },
   "oneOf": [
