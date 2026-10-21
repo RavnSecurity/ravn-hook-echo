@@ -1,0 +1,1980 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ravnsecurity.io/schema/stage-contract.v1.json",
+  "title": "Ravn stage contract v1",
+  "description": "Seven triage stages, one envelope. What a plugged stage receives from Ravn, and the shape of each stage's output. No report body, PoC or attachment, ever; no reporter score, rank, priority or reputation; every empty value names why. ADR platform-007.",
+  "$defs": {
+    "Maybe": {
+      "description": "Every empty value names why. Present: { value } with a non-null value. Absent: { value: null, reason }. A bare null, {} or [] never validates.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "value": {
+              "not": {
+                "type": "null"
+              }
+            }
+          },
+          "required": [
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "$ref": "#/$defs/Empty"
+        }
+      ]
+    },
+    "Empty": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "null"
+        },
+        "reason": {
+          "$ref": "#/$defs/EmptyReason"
+        }
+      },
+      "required": [
+        "value",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "EmptyReason": {
+      "description": "not-run: the producing stage did not run · not-observed: Ravn looked and has no fact, never 0 · unavailable: Ravn could not look (the read failed), never 0 and never not-observed · not-kept: Ravn does not keep this yet · not-declared: nothing declares it · not-configured: the program chose not to send it · not-read: the report body · too-few: similar cases in other programs, below the minimum · not-filed: the reporter filed nothing under this heading at the source · not-proposed: Assess gathered evidence and proposed no verdict",
+      "enum": [
+        "not-run",
+        "not-observed",
+        "unavailable",
+        "not-kept",
+        "not-declared",
+        "not-configured",
+        "not-read",
+        "too-few",
+        "not-filed",
+        "not-proposed"
+      ]
+    },
+    "Impl": {
+      "description": "What ran, or will: Ravn's built-in at a pinned version, a plug, or nothing yet.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "builtin"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "key",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "plug"
+            },
+            "plugId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "plugId"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "none"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Envelope": {
+      "description": "The one shape every stage receives, built-in or plug. `packet` is the stage's In; see the per-stage *Envelope definitions for the narrowing.",
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": 1
+        },
+        "stage": {
+          "enum": [
+            "intake",
+            "classify",
+            "route",
+            "assess",
+            "review",
+            "follow-up",
+            "knowledge"
+          ]
+        },
+        "stageRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reportId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "externalRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "orgId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "programId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stageSettingsVersionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "impl": {
+          "$ref": "#/$defs/Impl"
+        },
+        "asOf": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$",
+          "description": "Every fact in the packet is resolved as of this instant."
+        },
+        "inputDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "sha256 hex of canonicalParams(packet)."
+        },
+        "packet": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "contract",
+        "stage",
+        "stageRunId",
+        "attempt",
+        "reportId",
+        "source",
+        "externalRef",
+        "url",
+        "orgId",
+        "programId",
+        "stageSettingsVersionId",
+        "impl",
+        "asOf",
+        "inputDigest",
+        "packet"
+      ],
+      "additionalProperties": false
+    },
+    "TrustClass": {
+      "enum": [
+        "VERIFIED",
+        "ATTESTED",
+        "DISCLOSED"
+      ]
+    },
+    "Severity": {
+      "enum": [
+        "critical",
+        "high",
+        "medium",
+        "low",
+        "none"
+      ]
+    },
+    "DecisionAction": {
+      "enum": [
+        "auto-close",
+        "escalate"
+      ]
+    },
+    "OutcomeState": {
+      "enum": [
+        "ACCEPTED",
+        "REJECTED",
+        "PENDING"
+      ]
+    },
+    "ReporterFact": {
+      "description": "One fact about the reporter, labelled with how it is known — or its name with nothing under it, which is how *not observed* (Ravn looked, no fact) and *unavailable* (Ravn could not look) are said. Never a count of hidden facts.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "trust": {
+              "$ref": "#/$defs/TrustClass"
+            }
+          },
+          "required": [
+            "fact",
+            "value",
+            "trust"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "minLength": 1
+            },
+            "value": {
+              "type": "null"
+            },
+            "reason": {
+              "enum": [
+                "not-observed",
+                "unavailable"
+              ]
+            }
+          },
+          "required": [
+            "fact",
+            "value",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "StageAccount": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "externalId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "source",
+        "externalId"
+      ],
+      "additionalProperties": false
+    },
+    "Answers": {
+      "description": "p(yes) per yes/no question, or a precedent id offered as a hint. About the REPORT — allowed under rail 4.",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "p": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            },
+            "required": [
+              "p"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ref": {
+                "type": "string",
+                "minLength": 1
+              },
+              "hint": {
+                "const": true
+              }
+            },
+            "required": [
+              "ref",
+              "hint"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "SimilarCases": {
+      "type": "object",
+      "properties": {
+        "thisProgram": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "reportId": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "externalRef": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "outcome": {
+                            "enum": [
+                              "accepted",
+                              "rejected",
+                              "pending"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "reportId",
+                          "externalRef",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "otherPrograms": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "accepted": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "rejected": {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        "pending": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      },
+                      "required": [
+                        "accepted",
+                        "rejected",
+                        "pending"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "basis": {
+          "const": "fingerprint-equal"
+        }
+      },
+      "required": [
+        "thisProgram",
+        "otherPrograms",
+        "basis"
+      ],
+      "additionalProperties": false
+    },
+    "StageVerdict": {
+      "type": "object",
+      "properties": {
+        "isSecurityRelevant": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "severity": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Severity"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "category": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "isLikelyAiSlop": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "hasPoc": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "boolean"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "confidence": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "weaknesses": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "cwe": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "label": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "cwe"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "products": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "minItems": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "duplicateOf": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "isSecurityRelevant",
+        "severity",
+        "category",
+        "isLikelyAiSlop",
+        "hasPoc",
+        "confidence",
+        "weaknesses",
+        "products",
+        "duplicateOf"
+      ],
+      "additionalProperties": false
+    },
+    "Filed": {
+      "description": "What the reporter filed beside the report at the source: HackerOne's severity rating and CVSS score, the weakness (CWE) they chose, the scope item. Metadata, never body. not-filed: left blank at the source · not-observed: Ravn stored nothing for this case · not-kept: not stored yet.",
+      "type": "object",
+      "properties": {
+        "severity": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Severity"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "cvss": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 10
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "weakness": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "cwe": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "label": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "cwe"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "asset": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "severity",
+        "cvss",
+        "weakness",
+        "asset"
+      ],
+      "additionalProperties": false
+    },
+    "IntakeIn": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+        }
+      },
+      "required": [
+        "source",
+        "kind",
+        "observedAt"
+      ],
+      "additionalProperties": false
+    },
+    "IntakeOut": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "externalRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "title": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "account": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/StageAccount"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "observedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+        }
+      },
+      "required": [
+        "source",
+        "externalRef",
+        "url",
+        "title",
+        "account",
+        "observedAt"
+      ],
+      "additionalProperties": false
+    },
+    "IntakeEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "const": "intake"
+            },
+            "packet": {
+              "$ref": "#/$defs/IntakeIn"
+            }
+          }
+        }
+      ]
+    },
+    "ClassifyIn": {
+      "type": "object",
+      "properties": {
+        "report": {
+          "$ref": "#/$defs/IntakeOut"
+        },
+        "questionSetVersion": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "bodyAccess": {
+          "description": "Always absent in Phase 1. Not named `body`: assertBodyFree refuses that key even with null under it.",
+          "type": "object",
+          "properties": {
+            "value": {
+              "type": "null"
+            },
+            "reason": {
+              "const": "not-read"
+            }
+          },
+          "required": [
+            "value",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "report",
+        "questionSetVersion",
+        "bodyAccess"
+      ],
+      "additionalProperties": false
+    },
+    "ClassifyOut": {
+      "type": "object",
+      "properties": {
+        "verdict": {
+          "$ref": "#/$defs/StageVerdict"
+        },
+        "answers": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Answers"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "ranBy": {
+          "type": "object",
+          "properties": {
+            "model": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/Maybe"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "model",
+            "version"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "verdict",
+        "answers",
+        "ranBy"
+      ],
+      "additionalProperties": false
+    },
+    "ClassifyEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "const": "classify"
+            },
+            "packet": {
+              "$ref": "#/$defs/ClassifyIn"
+            }
+          }
+        }
+      ]
+    },
+    "RouteIn": {
+      "type": "object",
+      "properties": {
+        "classify": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/ClassifyOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "reporter": {
+          "type": "object",
+          "properties": {
+            "accepted": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/Maybe"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "decided": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/Maybe"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "required": [
+            "accepted",
+            "decided"
+          ],
+          "additionalProperties": false
+        },
+        "answers": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Answers"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "params": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "minProperties": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "classify",
+        "reporter",
+        "answers",
+        "params"
+      ],
+      "additionalProperties": false
+    },
+    "RouteOut": {
+      "type": "object",
+      "properties": {
+        "action": {
+          "$ref": "#/$defs/DecisionAction"
+        },
+        "reasons": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[a-z0-9][a-z0-9._-]*$",
+                        "maxLength": 64
+                      },
+                      "minItems": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "track": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "light",
+                        "standard",
+                        "deep"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "action",
+        "reasons",
+        "track"
+      ],
+      "additionalProperties": false
+    },
+    "RouteEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "const": "route"
+            },
+            "packet": {
+              "$ref": "#/$defs/RouteIn"
+            }
+          }
+        }
+      ]
+    },
+    "AssessIn": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RouteOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "answers": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Answers"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "filed": {
+          "$ref": "#/$defs/Filed"
+        },
+        "reporter": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "minTrustClass": {
+                          "$ref": "#/$defs/TrustClass"
+                        },
+                        "facts": {
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/ReporterFact"
+                          },
+                          "minItems": 1
+                        }
+                      },
+                      "required": [
+                        "minTrustClass",
+                        "facts"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "similar": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/SimilarCases"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "precedents": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": [
+                          "id"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "minItems": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "route",
+        "answers",
+        "filed",
+        "reporter",
+        "similar",
+        "precedents"
+      ],
+      "additionalProperties": false
+    },
+    "AssessOut": {
+      "type": "object",
+      "properties": {
+        "proposed": {
+          "description": "Assess never proposes from metadata: not-proposed when the tool gathered and judged nothing (#652). A plug that reads the report may fill the value.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "accept",
+                        "reject",
+                        "needs-info",
+                        "duplicate"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "severity": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/Severity"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "ranBy": {
+          "type": "object",
+          "properties": {
+            "tool": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "tool",
+            "version"
+          ],
+          "additionalProperties": false
+        },
+        "card": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "proposed",
+        "severity",
+        "ranBy",
+        "card"
+      ],
+      "additionalProperties": false
+    },
+    "AssessEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "const": "assess"
+            },
+            "packet": {
+              "$ref": "#/$defs/AssessIn"
+            }
+          }
+        }
+      ]
+    },
+    "ReviewIn": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/RouteOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "assess": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/AssessOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "route",
+        "assess"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewOut": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/OutcomeState"
+        },
+        "decidedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "override": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "from": {
+                          "allOf": [
+                            {
+                              "$ref": "#/$defs/Maybe"
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "value": {
+                                  "anyOf": [
+                                    {
+                                      "$ref": "#/$defs/DecisionAction"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        "to": {
+                          "$ref": "#/$defs/DecisionAction"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "stage": {
+                          "enum": [
+                            "intake",
+                            "classify",
+                            "route",
+                            "assess",
+                            "review",
+                            "follow-up",
+                            "knowledge"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "from",
+                        "to",
+                        "reason",
+                        "stage"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "outcome",
+        "decidedAt",
+        "actor",
+        "override"
+      ],
+      "additionalProperties": false
+    },
+    "ReviewEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "const": "review"
+            },
+            "packet": {
+              "$ref": "#/$defs/ReviewIn"
+            }
+          }
+        }
+      ]
+    },
+    "FollowUpIn": {
+      "type": "object",
+      "properties": {
+        "review": {
+          "$ref": "#/$defs/ReviewOut"
+        },
+        "lines": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "minItems": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "review",
+        "lines"
+      ],
+      "additionalProperties": false
+    },
+    "FollowUpOut": {
+      "type": "object",
+      "properties": {
+        "line": {
+          "type": "string",
+          "minLength": 1
+        },
+        "event": {
+          "enum": [
+            "shipped",
+            "not-affected",
+            "wont-fix"
+          ]
+        },
+        "ref": {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?Z$"
+        }
+      },
+      "required": [
+        "line",
+        "event",
+        "ref",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "FollowUpEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "const": "follow-up"
+            },
+            "packet": {
+              "$ref": "#/$defs/FollowUpIn"
+            }
+          }
+        }
+      ]
+    },
+    "KnowledgeIn": {
+      "type": "object",
+      "properties": {
+        "review": {
+          "$ref": "#/$defs/ReviewOut"
+        }
+      },
+      "required": [
+        "review"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeOut": {
+      "type": "object",
+      "properties": {
+        "precedentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "enum": [
+            "program",
+            "foundation"
+          ]
+        },
+        "reviewer": {
+          "description": "Who reviewed, when a plug at Knowledge can name a person: not-observed when Review named only the source (#656).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/Maybe"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "precedentId",
+        "scope",
+        "reviewer"
+      ],
+      "additionalProperties": false
+    },
+    "KnowledgeEnvelope": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/Envelope"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "stage": {
+              "const": "knowledge"
+            },
+            "packet": {
+              "$ref": "#/$defs/KnowledgeIn"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/IntakeEnvelope"
+    },
+    {
+      "$ref": "#/$defs/ClassifyEnvelope"
+    },
+    {
+      "$ref": "#/$defs/RouteEnvelope"
+    },
+    {
+      "$ref": "#/$defs/AssessEnvelope"
+    },
+    {
+      "$ref": "#/$defs/ReviewEnvelope"
+    },
+    {
+      "$ref": "#/$defs/FollowUpEnvelope"
+    },
+    {
+      "$ref": "#/$defs/KnowledgeEnvelope"
+    }
+  ]
+}
