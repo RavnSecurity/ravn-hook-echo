@@ -7,10 +7,10 @@ import type { HookableStage } from "./stages.js";
  * same answer, and no value from the packet ever reaches the output, so the
  * output is safe to show in the viewer.
  *
- * Ravn ignores the output today (a hook only receives until ravn-product#46).
- * It is returned in the response body and shown in the viewer so that the day
- * the return path lands, this hook is already a drop-in. Every field is
- * documented in the README under "What the echo answers".
+ * With a service account it is the hook's answer (src/answers.ts). It is also
+ * returned in the delivery's response body, which Ravn ignores, and shown in
+ * the viewer. Every field is documented in the README under "What the echo
+ * answers".
  */
 
 export const ECHO_TOOL = "ravn-hook-echo";
