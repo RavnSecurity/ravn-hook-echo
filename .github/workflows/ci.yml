@@ -1,0 +1,58 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, so a change to the published schema is noticed without a PR.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The required check: the repo's `required-checks` ruleset names this job.
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: typecheck
+        run: pnpm run typecheck
+
+      - name: lint
+        run: pnpm run lint
+
+      - name: test
+        run: pnpm run test
+
+      # The vendored schema equals the one published at its $id. Not strict
+      # until the schema is publicly served.
+      - name: schema in sync with the published one
+        run: pnpm run check:schema-sync
+
+      - name: container build
+        run: docker build -t ravn-hook-echo:ci .
+
+      - name: container smoke test
+        run: |
+          docker run -d --name hook -p 8080:8080 -e RAVN_HOOK_SECRET=ci -e VIEW_TOKEN=ci ravn-hook-echo:ci --no-fetch-schema
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8080/healthz && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/assess -d '{}')" = 401
+          docker logs hook
+          docker rm -f hook

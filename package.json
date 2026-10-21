@@ -1,0 +1,47 @@
+{
+  "name": "ravn-hook-echo",
+  "version": "0.1.0",
+  "description": "A reference Ravn Hook for every triage stage: verifies what Ravn sends, validates it against the public stage contract, echoes a documented answer, and misbehaves on request.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RavnSecurity/ravn-hook-echo.git"
+  },
+  "homepage": "https://github.com/RavnSecurity/ravn-hook-echo#readme",
+  "bugs": "https://github.com/RavnSecurity/ravn-hook-echo/issues",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.17.1",
+  "bin": {
+    "ravn-hook-echo": "./bin/ravn-hook-echo.js"
+  },
+  "files": [
+    "bin",
+    "dist/src",
+    "schema",
+    "README.md",
+    "SECURITY.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "tsc -p tsconfig.json && node --test \"dist/test/**/*.test.js\"",
+    "start": "node bin/ravn-hook-echo.js",
+    "check:schema-sync": "node scripts/check-schema-sync.mjs"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.16",
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.2"
+  }
+}
