@@ -133,8 +133,7 @@ export function envelope(stage: HookableStage, overrides: Record<string, unknown
     orgId: c("org"),
     programId: c("program"),
     stageSettingsVersionId: c("settings"),
-    // The schema's v1 word for a hook's Impl is "plug"; it is the published contract, kept as is.
-    impl: { kind: "plug", plugId: c("hook-id") },
+    impl: { kind: "hook", hookId: c("hook-id") },
     asOf: "2026-01-01T00:00:00.000Z",
     inputDigest: digestOf(packet),
     packet,

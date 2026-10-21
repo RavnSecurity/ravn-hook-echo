@@ -19,6 +19,9 @@ COPY --chown=node:node --from=build /app/dist/src ./dist/src
 COPY --chown=node:node package.json LICENSE README.md SECURITY.md ./
 COPY --chown=node:node bin ./bin
 COPY --chown=node:node schema ./schema
+# The service account's refresh token lives here. Mount a volume on it, or a
+# restart has a spent unwrap token and nothing to renew with.
+RUN mkdir -p /home/node/.ravn-hook-echo && chown node:node /home/node/.ravn-hook-echo && chmod 700 /home/node/.ravn-hook-echo
 USER node
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1

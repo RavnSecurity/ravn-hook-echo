@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import type { Ravn } from "./answers.js";
 import { echoOutput, seedOf } from "./echo.js";
 import { decide, describeMode, parseRoute } from "./modes.js";
 import type { SchemaFailure, StageSchema } from "./schema.js";
@@ -28,6 +29,8 @@ export interface ServerDeps {
   /** The current schema. A function so a refreshed copy is picked up without a restart. */
   schema: () => StageSchema;
   schemaId: string;
+  /** The service account's side: answers and MCP reads. Absent, the hook only receives. */
+  ravn?: Ravn;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 }
@@ -125,6 +128,7 @@ function deliveries(req: IncomingMessage, res: ServerResponse, deps: ServerDeps)
       schema: { id: deps.schemaId, source: schema.source.kind },
       retentionHours: deps.retentionHours,
       showValues: deps.showValues,
+      account: deps.ravn?.status() ?? null,
       deliveries: list,
     }),
   );
@@ -262,7 +266,7 @@ async function receive(
   if (deps.showValues && parseError === null) record.body = parsed;
   deps.store.add(record);
 
-  return send(res, decision.status, {
+  send(res, decision.status, {
     stage,
     deliveryId,
     attempt,
@@ -272,6 +276,31 @@ async function receive(
     schema: { valid: schemaValid, failures: schemaFailures },
     output: decision.status >= 200 && decision.status < 300 ? echo : null,
   });
+
+  // 6. Answer as the service account, and read over MCP, after the response.
+  if (deps.ravn && stage) {
+    if (decision.status < 200 || decision.status >= 300) {
+      record.answer = {
+        plan: "now",
+        state: "not-sent",
+        reason: `the delivery was answered ${decision.status}: the run is answered once a delivery succeeds`,
+      };
+    } else if (schemaValid !== true || !echo) {
+      record.answer = {
+        plan: "now",
+        state: "not-sent",
+        reason: "the packet failed the schema, so it names no stage run to answer",
+      };
+    } else {
+      deps.ravn.delivered({
+        record,
+        mode: route.mode,
+        stage,
+        envelope: parsed as Record<string, unknown>,
+        echo,
+      });
+    }
+  }
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {

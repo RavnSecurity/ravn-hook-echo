@@ -99,6 +99,17 @@ export const VIEW_JS = `(function () {
     metaEl.appendChild(el("span", null, "schema: " + data.schema.source + " (" + data.schema.id + ")"));
     metaEl.appendChild(el("span", null, "retention: " + data.retentionHours + "h"));
     metaEl.appendChild(el("span", null, data.showValues ? "values: shown (--show-values)" : "values: shape only"));
+    var a = data.account;
+    if (a) {
+      var acct = el("span", a.state === "ok" ? "ok" : a.state === "failing" ? "bad" : "warn",
+        "service account: " + a.state + (a.code ? " (" + a.code + ")" : "") +
+        (a.mode === "access-token-only" ? " · access token only, never renewed" : " · renewed " + a.renewals + "×") +
+        (a.accessExpiresAt ? " · access token until " + a.accessExpiresAt : ""));
+      metaEl.appendChild(acct);
+      metaEl.appendChild(el("span", null, "answers: " + (a.answerStages.length ? a.answerStages.join(", ") : "none")));
+    } else {
+      metaEl.appendChild(el("span", null, "no service account: receiving only"));
+    }
     metaEl.appendChild(el("span", null, "refreshes every 5s"));
 
     var open = {};
@@ -125,7 +136,10 @@ export const VIEW_JS = `(function () {
       c3.appendChild(el("div", "t", "attempt " + (d.attempt === null ? "?" : d.attempt) + (d.duplicate ? " · retry (seen " + d.seen + "×)" : "")));
       sum.appendChild(c3);
       var c4 = el("div");
-      c4.appendChild(badge("signature ok", "ok"));
+      if (d.answer && d.answer.state === "sent") c4.appendChild(badge("answer: " + d.answer.code, d.answer.code === "accepted" ? "ok" : "bad"));
+      else if (d.answer && d.answer.state === "scheduled") c4.appendChild(badge("answer due " + d.answer.dueAt, "warn"));
+      else if (d.answer) c4.appendChild(badge("not answered", "warn"));
+      else c4.appendChild(badge("signature ok", "ok"));
       sum.appendChild(c4);
       var c5 = el("div");
       if (d.schemaValid === true) c5.appendChild(badge("schema ok", "ok"));
@@ -159,9 +173,42 @@ export const VIEW_JS = `(function () {
         d.schemaFailures.forEach(function (f) { ul.appendChild(el("li", null, f.path + " — " + f.keyword + ": " + f.message)); });
         body.appendChild(ul);
       }
-      if (d.echo) {
+      if (d.answer) {
+        var an = d.answer;
+        body.appendChild(el("h3", null, "Answer (as the service account)"));
+        var adl = el("dl");
+        row(adl, "plan", an.plan);
+        row(adl, "state", an.state + (an.reason ? " · " + an.reason : ""));
+        if (an.dueAt) row(adl, "due at", an.dueAt);
+        if (an.sentAt) row(adl, "sent at", an.sentAt);
+        if (an.localValid !== undefined) row(adl, "schema, here", an.localValid ? "valid <Stage>Answer" : "invalid <Stage>Answer");
+        if (an.state === "sent") {
+          row(adl, "Ravn's reply", (an.status === null ? "no response" : an.status) + " · " + an.code + (an.replayed ? " (replayed: already recorded)" : ""));
+          row(adl, "latency", an.latencyMs + "ms");
+        }
+        body.appendChild(adl);
+        if (an.paths && an.paths.length) {
+          body.appendChild(el("h3", null, "Paths Ravn refused"));
+          var pul = el("ul", "fail");
+          an.paths.forEach(function (p) { pul.appendChild(el("li", null, p)); });
+          body.appendChild(pul);
+        }
+        if (an.out !== undefined) {
+          body.appendChild(el("h3", null, "Out sent"));
+          body.appendChild(el("pre", null, pretty(an.out)));
+        }
+      } else if (d.echo) {
         body.appendChild(el("h3", null, "Echo output (what this hook would answer)"));
         body.appendChild(el("pre", null, pretty(d.echo)));
+      }
+      if (d.reads && d.reads.length) {
+        body.appendChild(el("h3", null, "MCP reads (codes and counts, never values)"));
+        var rdl = el("dl");
+        d.reads.forEach(function (r) {
+          var counts = Object.keys(r.counts).map(function (k) { return k + ": " + r.counts[k]; }).join(", ");
+          row(rdl, r.tool, (r.status === null ? "" : r.status + " · ") + r.code + (counts ? " · " + counts : "") + (r.latencyMs ? " · " + r.latencyMs + "ms" : ""));
+        });
+        body.appendChild(rdl);
       }
       if (d.shape) {
         body.appendChild(el("h3", null, data.showValues ? "Packet shape" : "Packet shape (values are never shown here)"));

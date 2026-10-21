@@ -60,3 +60,13 @@ export const OUT_DEF: Record<HookableStage, string> = {
   "follow-up": "FollowUpOut",
   knowledge: "KnowledgeOut",
 };
+
+/** What a hook sends back for each stage: `{ stageRunId, attempt, out }`. */
+export const ANSWER_DEF: Record<HookableStage, string> = {
+  classify: "ClassifyAnswer",
+  route: "RouteAnswer",
+  assess: "AssessAnswer",
+  review: "ReviewAnswer",
+  "follow-up": "FollowUpAnswer",
+  knowledge: "KnowledgeAnswer",
+};

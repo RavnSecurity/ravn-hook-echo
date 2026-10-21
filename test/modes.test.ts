@@ -1,6 +1,48 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decide, MAX_FAIL_ATTEMPTS, MAX_SLOW_MS, parseRoute } from "../src/modes.js";
+import {
+  answerPlan,
+  decide,
+  MAX_ANSWER_LATE_MS,
+  MAX_FAIL_ATTEMPTS,
+  MAX_SLOW_MS,
+  parseRoute,
+} from "../src/modes.js";
+
+test("answer modes parse, and change the answer, not the delivery", () => {
+  assert.deepEqual(parseRoute("/classify/never"), { stage: "classify", mode: { kind: "never" } });
+  assert.deepEqual(parseRoute("/never"), { stage: "root", mode: { kind: "never" } });
+  assert.deepEqual(parseRoute("/route/answer-invalid"), {
+    stage: "route",
+    mode: { kind: "answer-invalid" },
+  });
+  assert.deepEqual(parseRoute("/assess/answer-late/5m"), {
+    stage: "assess",
+    mode: { kind: "answer-late", ms: 300_000 },
+  });
+  assert.deepEqual(parseRoute("/assess/answer-late/90s")?.mode, {
+    kind: "answer-late",
+    ms: 90_000,
+  });
+  assert.deepEqual(parseRoute("/assess/answer-late/99h")?.mode, {
+    kind: "answer-late",
+    ms: MAX_ANSWER_LATE_MS,
+  });
+  assert.equal(parseRoute("/assess/answer-late/soon"), null);
+  assert.equal(parseRoute("/assess/sometimes"), null);
+  for (const path of ["/assess/never", "/assess/answer-late/1s", "/assess/answer-invalid"]) {
+    const route = parseRoute(path);
+    assert.ok(route);
+    assert.equal(decide(route.mode, 1).status, 200, path);
+  }
+  assert.deepEqual(answerPlan({ kind: "never" }), { kind: "never" });
+  assert.deepEqual(answerPlan({ kind: "ok" }), { kind: "answer", delayMs: 0, invalid: false });
+  assert.deepEqual(answerPlan({ kind: "answer-invalid" }), {
+    kind: "answer",
+    delayMs: 0,
+    invalid: true,
+  });
+});
 
 test("routes parse", () => {
   assert.deepEqual(parseRoute("/assess"), { stage: "assess", mode: { kind: "ok" } });
