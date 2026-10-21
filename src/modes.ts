@@ -10,17 +10,31 @@ import { type HookableStage, isHookable } from "./stages.js";
  *   /assess/slow/30s        waits, then 200                   Ravn's delivery timeout, then a retry
  *   /assess/status/410      that status                       how Ravn treats each status class
  *
+ * With a service account configured, a delivered packet is also answered
+ * (src/answers.ts). Three modes change the answer, not the delivery:
+ *
+ *   /assess/never           200, and never answers            the deadline sends the case to a person
+ *   /assess/answer-late/5m  200, answers after 5 minutes      a late answer is refused
+ *   /assess/answer-invalid  200, answers with an invalid Out  the refusal names the failing paths
+ *
  * The caps keep a public instance from being used to hold sockets.
  */
 export const MAX_FAIL_ATTEMPTS = 20;
 export const MAX_SLOW_MS = 120_000;
+/** A late answer is a timer, not a socket, so its cap is the longest deadline worth watching. */
+export const MAX_ANSWER_LATE_MS = 24 * 3_600_000;
 
 export type Mode =
   | { kind: "ok" }
   | { kind: "fail"; until: number }
   | { kind: "fail-always" }
   | { kind: "slow"; ms: number }
-  | { kind: "status"; status: number };
+  | { kind: "status"; status: number }
+  | { kind: "never" }
+  | { kind: "answer-late"; ms: number }
+  | { kind: "answer-invalid" };
+
+const UNIT_MS: Record<string, number> = { ms: 1, s: 1_000, m: 60_000, h: 3_600_000 };
 
 export interface Route {
   /** The stage in the path, or "root" for `POST /`, which dispatches on `x-ravn-event`. */
@@ -38,6 +52,11 @@ export function parseRoute(pathname: string): Route | null {
     segments.shift();
   }
   if (segments.length === 0) return { stage, mode: { kind: "ok" } };
+  if (segments.length === 1) {
+    if (segments[0] === "never") return { stage, mode: { kind: "never" } };
+    if (segments[0] === "answer-invalid") return { stage, mode: { kind: "answer-invalid" } };
+    return null;
+  }
   if (segments.length !== 2) return null;
   const [mode, arg] = segments as [string, string];
   switch (mode) {
@@ -60,6 +79,12 @@ export function parseRoute(pathname: string): Route | null {
       const status = Number(arg);
       if (status < 200 || status > 599) return null;
       return { stage, mode: { kind: "status", status } };
+    }
+    case "answer-late": {
+      const m = /^(\d{1,8})(ms|s|m|h)$/.exec(arg);
+      if (!m?.[2]) return null;
+      const ms = Number(m[1]) * (UNIT_MS[m[2]] ?? 1);
+      return { stage, mode: { kind: "answer-late", ms: Math.min(ms, MAX_ANSWER_LATE_MS) } };
     }
     default:
       return null;
@@ -96,6 +121,28 @@ export function decide(mode: Mode, attempt: number): Decision {
       return { status: 200, delayMs: mode.ms, note: `ok after waiting ${mode.ms}ms on request` };
     case "status":
       return { status: mode.status, delayMs: 0, note: `status ${mode.status} on request` };
+    case "never":
+      return { status: 200, delayMs: 0, note: "ok: received, and never answered on request" };
+    case "answer-late":
+      return { status: 200, delayMs: 0, note: `ok: answering ${mode.ms}ms late on request` };
+    case "answer-invalid":
+      return { status: 200, delayMs: 0, note: "ok: answering with an invalid Out on request" };
+  }
+}
+
+/** How a delivered packet is answered under a mode. */
+export type AnswerPlan = { kind: "never" } | { kind: "answer"; delayMs: number; invalid: boolean };
+
+export function answerPlan(mode: Mode): AnswerPlan {
+  switch (mode.kind) {
+    case "never":
+      return { kind: "never" };
+    case "answer-late":
+      return { kind: "answer", delayMs: mode.ms, invalid: false };
+    case "answer-invalid":
+      return { kind: "answer", delayMs: 0, invalid: true };
+    default:
+      return { kind: "answer", delayMs: 0, invalid: false };
   }
 }
 
@@ -111,5 +158,11 @@ export function describeMode(mode: Mode): string {
       return `slow/${mode.ms}ms`;
     case "status":
       return `status/${mode.status}`;
+    case "never":
+      return "never";
+    case "answer-late":
+      return `answer-late/${mode.ms}ms`;
+    case "answer-invalid":
+      return "answer-invalid";
   }
 }

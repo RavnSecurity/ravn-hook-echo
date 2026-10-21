@@ -1,4 +1,8 @@
+import { existsSync } from "node:fs";
+import { ServiceAccount } from "./account.js";
+import { Ravn, ravnUrls } from "./answers.js";
 import { ConfigError, parseConfig, USAGE } from "./config.js";
+import { McpReader } from "./mcp.js";
 import { fetchPublishedSchema, loadVendoredSchema, SCHEMA_ID, StageSchema } from "./schema.js";
 import { createHookServer } from "./server.js";
 import { HOOKABLE } from "./stages.js";
@@ -43,6 +47,27 @@ async function main(): Promise<void> {
   const store = new DeliveryStore({ retentionHours: cfg.retentionHours });
   setInterval(() => store.sweep(), 60_000).unref();
 
+  // As a service account, when given a credential or a saved refresh token.
+  const urls = ravnUrls(cfg.ravnUrl);
+  let ravn: Ravn | undefined;
+  if (cfg.unwrapToken || cfg.accessTokenOnly || existsSync(cfg.stateFile)) {
+    const account = new ServiceAccount({
+      gatewayUrl: urls.gateway,
+      unwrapToken: cfg.unwrapToken,
+      accessTokenOnly: cfg.accessTokenOnly,
+      stateFile: cfg.stateFile,
+    });
+    await account.start();
+    account.keepFresh();
+    ravn = new Ravn({
+      account,
+      reader: new McpReader({ url: urls.mcp, caller: account, version: VERSION }),
+      answersUrl: urls.answers,
+      stages: new Set(cfg.answerStages),
+      schema: () => schema,
+    });
+  }
+
   const server = createHookServer({
     secret: cfg.secret,
     viewToken: cfg.viewToken,
@@ -52,6 +77,7 @@ async function main(): Promise<void> {
     store,
     schema: () => schema,
     schemaId: SCHEMA_ID,
+    ...(ravn ? { ravn } : {}),
   });
 
   server.listen(cfg.port, cfg.host, () => {
@@ -64,6 +90,12 @@ async function main(): Promise<void> {
     console.log("viewer (keep this URL private; the token is the part after #k=):");
     console.log(`  ${base}/view#k=${cfg.viewToken}`);
     if (cfg.showValues) console.log("--show-values is on: the viewer shows packet values.");
+    if (ravn) {
+      const stages = cfg.answerStages.length ? cfg.answerStages.join(", ") : "none";
+      console.log(`as a service account on ${cfg.ravnUrl}: answering ${stages}; reading over MCP`);
+    } else {
+      console.log("no service account: receiving only (set RAVN_UNWRAP_TOKEN to answer)");
+    }
   });
 
   const stop = () => server.close(() => process.exit(0));

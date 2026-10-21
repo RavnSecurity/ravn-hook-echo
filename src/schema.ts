@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { Ajv2020, type ErrorObject, type ValidateFunction } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import { ENVELOPE_DEF, type HookableStage, OUT_DEF } from "./stages.js";
+import { ANSWER_DEF, ENVELOPE_DEF, type HookableStage, OUT_DEF } from "./stages.js";
 
 /** The stage contract's one stable name. The vendored copy is a fallback for the same bytes. */
 export const SCHEMA_ID = "https://ravnsecurity.io/schema/stage-contract.v1.json";
@@ -90,6 +90,11 @@ export class StageSchema {
   /** The output a hook would answer with for a stage. */
   validateOutput(stage: HookableStage, value: unknown): SchemaVerdict {
     return this.validateDef(OUT_DEF[stage], value);
+  }
+
+  /** The answer a hook sends back for a stage: `{ stageRunId, attempt, out }`. */
+  validateAnswer(stage: HookableStage, value: unknown): SchemaVerdict {
+    return this.validateDef(ANSWER_DEF[stage], value);
   }
 
   validateDef(def: string, value: unknown): SchemaVerdict {

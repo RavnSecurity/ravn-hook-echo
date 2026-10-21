@@ -1,4 +1,6 @@
+import type { AnswerRecord } from "./answers.js";
 import type { EchoSeed } from "./echo.js";
+import type { ReadRecord } from "./mcp.js";
 import type { SchemaFailure } from "./schema.js";
 import type { Shape } from "./shape.js";
 import type { HookableStage } from "./stages.js";
@@ -33,6 +35,10 @@ export interface DeliveryRecord {
   shape: Shape | null;
   /** The packet itself. Set only with `--show-values`, which needs a loopback bind. */
   body?: unknown;
+  /** The answer sent back as the service account, and Ravn's reply code. Filled in after the response. */
+  answer?: AnswerRecord;
+  /** The MCP reads made after the delivery: codes and counts only. */
+  reads?: ReadRecord[];
 }
 
 /**

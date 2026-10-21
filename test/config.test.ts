@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ConfigError, parseConfig } from "../src/config.js";
+import { HOOKABLE } from "../src/stages.js";
 
 const env = { RAVN_HOOK_SECRET: "s" };
 
@@ -46,4 +47,37 @@ test("VIEW_TOKEN, PORT, RETENTION_HOURS, PUBLIC_BASE_URL", () => {
 
 test("unknown flags are refused", () => {
   assert.throws(() => parseConfig(["--nope"], env), /unknown flag/);
+});
+
+test("service account settings", () => {
+  const c = parseConfig([], env);
+  assert.ok(c !== "help");
+  assert.deepEqual(
+    [c.unwrapToken, c.accessTokenOnly, c.ravnUrl, c.answerStages],
+    [null, null, "https://apps.ravnsecurity.io", [...HOOKABLE]],
+  );
+  assert.match(c.stateFile, /\.ravn-hook-echo[/\\]state\.json$/);
+
+  const d = parseConfig([], {
+    ...env,
+    RAVN_UNWRAP_TOKEN: " u ",
+    RAVN_STATE_FILE: "/data/state.json",
+    ANSWER_STAGES: "route, classify,route",
+    RAVN_URL: "https://apps.ravn.localhost/",
+  });
+  assert.ok(d !== "help");
+  assert.deepEqual(
+    [d.unwrapToken, d.stateFile, d.answerStages, d.ravnUrl],
+    ["u", "/data/state.json", ["route", "classify"], "https://apps.ravn.localhost"],
+  );
+
+  const none = parseConfig([], { ...env, ANSWER_STAGES: "none" });
+  assert.ok(none !== "help");
+  assert.deepEqual(none.answerStages, []);
+
+  assert.throws(() => parseConfig([], { ...env, ANSWER_STAGES: "intake" }), /ANSWER_STAGES/);
+  assert.throws(
+    () => parseConfig([], { ...env, RAVN_UNWRAP_TOKEN: "u", RAVN_ACCESS_TOKEN_ONLY: "a" }),
+    /not both/,
+  );
 });
