@@ -18,6 +18,7 @@ Anything it can do, your own hook can do too.
 - [What the echo answers](#what-the-echo-answers)
 - [The viewer](#the-viewer)
 - [Configuration](#configuration)
+- [Deploy](#deploy)
 - [Develop](#develop)
 
 ## What a hook is
@@ -447,11 +448,11 @@ check a substring search.
 
 | Setting | Default | |
 | --- | --- | --- |
-| `RAVN_HOOK_SECRET` | none, required | The signing secret Ravn showed when the hook was created |
+| `RAVN_HOOK_SECRET` | none | The signing secret Ravn showed when the hook was created. Unset, the hook boots **unconfigured**: every delivery is answered `503` and nothing is stored |
 | `PORT`, `--port` | `8080` | Listen port |
 | `HOST`, `--host` | `0.0.0.0` | Bind address |
 | `PUBLIC_BASE_URL` | `http://localhost:<port>` | The address Ravn reaches this hook on, used in the printed URLs |
-| `VIEW_TOKEN` | random, printed at start | The viewer's token |
+| `VIEW_TOKEN` | random, printed at start | The viewer's token. Set, it is never printed |
 | `RETENTION_HOURS` | `24` | How long deliveries stay in memory |
 | `--show-values` | off | Show packet values in the viewer. Loopback only |
 | `--no-fetch-schema` | off | Use the vendored schema without fetching the published one |
@@ -461,7 +462,44 @@ check a substring search.
 | `ANSWER_STAGES` | all six | The stages to answer, comma-separated, or `none` |
 | `RAVN_URL` | `https://apps.ravnsecurity.io` | Where Ravn is |
 
-Other endpoints: `GET /healthz` answers `{ "ok": true }`.
+Other endpoints: `GET /healthz` answers `{ "ok": true, "configured": true }`, and
+`200` even when unconfigured, so a pod waiting for its secret stays up.
+
+### Unconfigured
+
+Without `RAVN_HOOK_SECRET` the hook still starts, so a deployment can come up
+before its secret is written:
+
+- Every delivery is answered `503` with the reason, before its body is read.
+  Ravn retries it, so nothing is lost.
+- The viewer's header says *not configured*.
+- Without `VIEW_TOKEN` too, no viewer token is generated for printing:
+  there is nothing to see.
+
+Without `RAVN_UNWRAP_TOKEN` and without a state file, it receives only, and the
+viewer says answers and reads are off.
+
+### Logs
+
+Nothing the hook prints carries a token, a secret or a value from a packet, so
+its logs can be shipped to a log store. The one exception is a viewer token it
+generated itself, printed once so you can open the viewer; set `VIEW_TOKEN` and
+the printed URL says `#k=<VIEW_TOKEN>` instead. A test runs the real CLI with
+marked credentials and canary packets and searches everything it printed.
+
+## Deploy
+
+Ravn runs one instance at `https://echo-hook.ravnsecurity.io`, as `svc-hook-echo`
+on the shared service chart:
+
+- `deploy/values.yaml`, `deploy/values-prod.yaml`: one replica, a 1 GiB volume
+  at `/state` for the refresh token chain, and the secret
+  `ravn/prod/svc-hook-echo/hook` (`RAVN_HOOK_SECRET`, `RAVN_UNWRAP_TOKEN`,
+  `VIEW_TOKEN`) through an ExternalSecret, mounted optional so the pod boots
+  before it exists. Env is read at start: restart the pod after writing it.
+- `.github/workflows/deploy.yml`: on a push to `main`, `ci` then
+  `ravn-actions`' deploy workflow, which builds the image to ECR and writes the
+  lane record in argo-apps.
 
 ## Develop
 

@@ -87,8 +87,23 @@ async function main(): Promise<void> {
     console.log("hook URLs, one per stage:");
     for (const s of HOOKABLE) console.log(`  ${base}/${s}`);
     console.log(`  ${base}/  (dispatches on x-ravn-event)`);
-    console.log("viewer (keep this URL private; the token is the part after #k=):");
-    console.log(`  ${base}/view#k=${cfg.viewToken}`);
+    if (cfg.secret === null) {
+      console.log(
+        "not configured: RAVN_HOOK_SECRET is not set; every delivery is refused with 503 until it is",
+      );
+    }
+    // ❗A token from the environment is never printed: these lines may be
+    // shipped to a log store. A generated one is, once, or nobody could open
+    // the viewer; unconfigured, there is nothing to see, so not even that.
+    if (cfg.viewTokenFromEnv) {
+      console.log("viewer (the token is VIEW_TOKEN):");
+      console.log(`  ${base}/view#k=<VIEW_TOKEN>`);
+    } else if (cfg.secret === null) {
+      console.log("viewer: off until VIEW_TOKEN is set");
+    } else {
+      console.log("viewer (keep this URL private; the token is the part after #k=):");
+      console.log(`  ${base}/view#k=${cfg.viewToken}`);
+    }
     if (cfg.showValues) console.log("--show-values is on: the viewer shows packet values.");
     if (ravn) {
       const stages = cfg.answerStages.length ? cfg.answerStages.join(", ") : "none";
@@ -98,7 +113,7 @@ async function main(): Promise<void> {
           `answers ${stages}; reads over MCP`,
       );
     } else {
-      console.log("no service account: receiving only (set RAVN_UNWRAP_TOKEN to answer)");
+      console.log("no service account: answers and reads off (set RAVN_UNWRAP_TOKEN to answer)");
     }
   });
 

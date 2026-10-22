@@ -6,12 +6,17 @@ import { HOOKABLE, type HookableStage, isHookable } from "./stages.js";
 export interface Config {
   port: number;
   host: string;
-  /** The signing secret Ravn shows once. Required: an unsigned endpoint on the internet stores nothing. */
-  secret: string;
+  /**
+   * The signing secret Ravn shows once. Null boots the hook unconfigured: it
+   * serves `/healthz` and the viewer, and refuses every delivery with 503.
+   */
+  secret: string | null;
   showValues: boolean;
   retentionHours: number;
   publicBaseUrl: string;
   viewToken: string;
+  /** VIEW_TOKEN was set. Then the token is never printed: logs may be shipped elsewhere. */
+  viewTokenFromEnv: boolean;
   /** Fetch the schema from its `$id` at start. Off keeps the vendored copy (tests, air-gapped runs). */
   fetchSchema: boolean;
   /** Where Ravn is: `https://apps.ravnsecurity.io`, or a local stack. */
@@ -42,10 +47,12 @@ export const USAGE = `ravn-hook-echo — a reference Ravn Hook for every triage 
   ravn-hook-echo [--port N] [--host H] [--show-values] [--no-fetch-schema]
 
 Environment
-  RAVN_HOOK_SECRET  the signing secret Ravn showed when the hook was created (required)
+  RAVN_HOOK_SECRET  the signing secret Ravn showed when the hook was created.
+                    Unset, deliveries are refused with 503 until it is.
   PORT              listen port (default 8080)
   HOST              bind address (default 0.0.0.0)
-  VIEW_TOKEN        the viewer's bearer token; generated and printed once when unset
+  VIEW_TOKEN        the viewer's bearer token; never printed. Unset, one is
+                    generated and printed once
   RETENTION_HOURS   how long deliveries stay in memory (default 24)
   PUBLIC_BASE_URL   the URL Ravn reaches this hook on, for the printed addresses
 
@@ -91,9 +98,7 @@ export function parseConfig(
     }
   }
 
-  const secret = env.RAVN_HOOK_SECRET ?? "";
-  if (!secret)
-    throw new ConfigError("RAVN_HOOK_SECRET is not set: the hook cannot verify deliveries");
+  const secret = env.RAVN_HOOK_SECRET || null;
 
   const port = integer(String(flags.get("port") ?? env.PORT ?? "8080"), "PORT", 0, 65535);
   const host = String(flags.get("host") ?? env.HOST ?? "0.0.0.0");
@@ -104,6 +109,7 @@ export function parseConfig(
     );
   }
   const retentionHours = integer(env.RETENTION_HOURS ?? "24", "RETENTION_HOURS", 0, 24 * 365);
+  const viewTokenFromEnv = Boolean(env.VIEW_TOKEN?.trim());
   const viewToken = env.VIEW_TOKEN?.trim() || randomBytes(16).toString("hex");
   const displayHost = host === "0.0.0.0" || host === "::" ? "localhost" : host;
   const publicBaseUrl = (env.PUBLIC_BASE_URL?.trim() || `http://${displayHost}:${port}`).replace(
@@ -127,6 +133,7 @@ export function parseConfig(
     retentionHours,
     publicBaseUrl,
     viewToken,
+    viewTokenFromEnv,
     fetchSchema: flags.get("no-fetch-schema") !== true,
     ravnUrl,
     unwrapToken,

@@ -1,0 +1,49 @@
+# svc-hook-echo — base values (env-agnostic). Overrides the shared chart
+# (ravn-ops/infra/charts/service). Not a subgraph: a public hook endpoint and
+# its viewer, on its own host (set per lane by argo-apps apps/svc-hook-echo.yaml).
+
+# ECR repo (created by ravn-ops' services unit from infra/services/svc-hook-echo).
+# The tag comes from the lane record, argo-apps lanes/<env>/svc-hook-echo.yaml.
+image:
+  repository: "244689414108.dkr.ecr.us-west-2.amazonaws.com/ravn/svc-hook-echo"
+  tag: ""
+
+# ❗One replica, always. The hook rotates its refresh token on every renew, and
+# a spent one presented again revokes the whole chain: two pods sharing (or
+# racing for) one state file is exactly that. The chart refuses replicaCount > 1
+# or autoscaling when persistence is on.
+replicaCount: 1
+
+# The image listens on 8080 (Dockerfile: PORT=8080). Chart Service 80 -> 8080.
+service:
+  targetPort: 8080
+
+# The root of its own origin, not a path on the apps host: it serves a viewer
+# page, which must not share cookies or storage with the portal. Nothing to
+# strip, so no rewrite.
+ingress:
+  enabled: true
+  pathPrefix: ""
+  stripPrefix: false
+
+# Always 200 while the process serves, configured or not: a pod waiting for its
+# secret must stay up, not crash-loop. `configured` in the body says which.
+healthCheck:
+  path: /healthz
+
+# The refresh token chain lives here (RAVN_STATE_FILE). A restart that loses it
+# loses the service account, since the unwrap token in the env is spent by then.
+# The chart adds strategy: Recreate, as an RWO volume can't be shared by a
+# rolling update.
+persistence:
+  enabled: true
+  size: 1Gi
+  mountPath: /state
+
+# The image runs as `node` (1000). A fresh EBS volume is root-owned; fsGroup
+# makes /state writable by the hook.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000

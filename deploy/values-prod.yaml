@@ -1,0 +1,31 @@
+# svc-hook-echo — prod overlay (layered on values.yaml for the env: prod cluster).
+# The image tag is NOT here: it is the lane record, argo-apps
+# lanes/prod/svc-hook-echo.yaml, written by .github/workflows/deploy.yml.
+
+# ravn/prod/svc-hook-echo/hook holds RAVN_HOOK_SECRET, RAVN_UNWRAP_TOKEN and
+# VIEW_TOKEN. Tofu creates the container only; a person writes the value once
+# (Ravn mints the first two). Until then ESO can't sync it and the Secret does
+# not exist.
+externalSecrets:
+  - name: svc-hook-echo-hook
+    remoteKey: ravn/prod/svc-hook-echo/hook
+    refreshInterval: 1h
+
+# ❗optional: true. Without it a missing Secret holds the pod in
+# CreateContainerConfigError. With it the hook boots unconfigured: /healthz is
+# 200, deliveries get 503 (Ravn retries them), and the viewer says so.
+# VIEW_TOKEN comes from here too, so the viewer URL survives restarts.
+# Env is read at start: after the value is written, restart the pod.
+envFrom:
+  - secretRef:
+      name: svc-hook-echo-hook
+      optional: true
+
+# Helm replaces lists: this is the whole env.
+env:
+  - {name: PUBLIC_BASE_URL, value: "https://echo-hook.ravnsecurity.io"}
+  - {name: RAVN_URL, value: "https://apps.ravnsecurity.io"}
+  - {name: ANSWER_STAGES, value: "classify,route,assess,review,follow-up,knowledge"}
+  # On the PVC (values.yaml). Used before RAVN_UNWRAP_TOKEN on every restart:
+  # a spent unwrap token beside a live chain is the normal state.
+  - {name: RAVN_STATE_FILE, value: "/state/state.json"}

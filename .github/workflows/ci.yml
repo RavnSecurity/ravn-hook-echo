@@ -2,6 +2,8 @@ name: ci
 
 on:
   pull_request:
+  # deploy.yml runs this as its `check` before it builds.
+  workflow_call:
   push:
     branches: [main]
   schedule:
@@ -11,8 +13,10 @@ on:
 permissions:
   contents: read
 
+# github.workflow is the caller's name when deploy.yml calls this, so the two
+# runs a push to main starts don't cancel each other.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -57,3 +61,14 @@ jobs:
           test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8080/assess -d '{}')" = 401
           docker logs hook
           docker rm -f hook
+
+      # As prod boots before its secret is written: up, healthy, refusing deliveries.
+      - name: container smoke test, unconfigured
+        run: |
+          docker run -d --name bare -p 8081:8080 ravn-hook-echo:ci --no-fetch-schema
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:8081/healthz && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8081/healthz | grep -q '"configured":false'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8081/assess -d '{}')" = 503
+          test "$(docker inspect -f '{{.State.Running}}' bare)" = true
+          docker logs bare
+          docker rm -f bare
