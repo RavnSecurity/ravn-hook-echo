@@ -11,15 +11,17 @@ externalSecrets:
     remoteKey: ravn/prod/svc-hook-echo/hook
     refreshInterval: 1h
 
-# ❗optional: true. Without it a missing Secret holds the pod in
-# CreateContainerConfigError. With it the hook boots unconfigured: /healthz is
-# 200, deliveries get 503 (Ravn retries them), and the viewer says so.
+# ❗NOT optional, on purpose. The values are read when the container starts,
+# so an optional Secret that ESO syncs a few seconds after the pod starts would
+# leave the hook unconfigured until someone restarts it. Required, the pod
+# waits in CreateContainerConfigError until ESO has synced, then starts with
+# its credentials. The secret is seeded before the Application exists
+# (ravn-hook-echo#13). The app's unconfigured mode stays, for local runs.
 # VIEW_TOKEN comes from here too, so the viewer URL survives restarts.
 # Env is read at start: after the value is written, restart the pod.
 envFrom:
   - secretRef:
       name: svc-hook-echo-hook
-      optional: true
 
 # Helm replaces lists: this is the whole env.
 env:
