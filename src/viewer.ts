@@ -96,6 +96,9 @@ export const VIEW_JS = `(function () {
   function render(data) {
     metaEl.hidden = false;
     metaEl.textContent = "";
+    if (data.configured === false) {
+      metaEl.appendChild(el("span", "bad", "not configured: RAVN_HOOK_SECRET is not set; deliveries are refused with 503"));
+    }
     metaEl.appendChild(el("span", null, "schema: " + data.schema.source + " (" + data.schema.id + ")"));
     metaEl.appendChild(el("span", null, "retention: " + data.retentionHours + "h"));
     metaEl.appendChild(el("span", null, data.showValues ? "values: shown (--show-values)" : "values: shape only"));
@@ -108,7 +111,7 @@ export const VIEW_JS = `(function () {
       metaEl.appendChild(acct);
       metaEl.appendChild(el("span", null, "answers: " + (a.answerStages.length ? a.answerStages.join(", ") : "none")));
     } else {
-      metaEl.appendChild(el("span", null, "no service account: receiving only"));
+      metaEl.appendChild(el("span", null, "no service account: answers and reads off (no RAVN_UNWRAP_TOKEN and no saved state)"));
     }
     metaEl.appendChild(el("span", null, "refreshes every 5s"));
 

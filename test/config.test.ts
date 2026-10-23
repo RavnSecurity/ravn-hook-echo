@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ConfigError, parseConfig } from "../src/config.js";
+import { parseConfig } from "../src/config.js";
 import { HOOKABLE } from "../src/stages.js";
 
 const env = { RAVN_HOOK_SECRET: "s" };
@@ -15,8 +15,17 @@ test("defaults", () => {
   assert.match(c.viewToken, /^[0-9a-f]{32}$/, "128-bit random");
 });
 
-test("a secret is required", () => {
-  assert.throws(() => parseConfig([], {}), ConfigError);
+test("no secret boots unconfigured, rather than refusing to start", () => {
+  const c = parseConfig([], {});
+  assert.ok(c !== "help");
+  assert.equal(c.secret, null);
+});
+
+test("a VIEW_TOKEN from the environment is marked so, so it is never printed", () => {
+  const set = parseConfig([], { ...env, VIEW_TOKEN: "t" });
+  const generated = parseConfig([], env);
+  assert.ok(set !== "help" && generated !== "help");
+  assert.deepEqual([set.viewTokenFromEnv, generated.viewTokenFromEnv], [true, false]);
 });
 
 test("--show-values is refused unless bound to loopback", () => {

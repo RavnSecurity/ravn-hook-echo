@@ -1,0 +1,63 @@
+name: deploy
+
+# Deploy by promotion (ADR ops-007 §1–§2), as svc-assets does. On push to main:
+#   1. `check`: this repo's ci, the same job that gates every PR. Nothing red
+#      is deployed.
+#   2. RavnSecurity/ravn-actions' reusable deploy workflow reads the lane list
+#      argo-apps holds (lanes/lanes.yaml) and decides build / promote / hotfix.
+#      With prod as the only lane, every push to main is a build.
+#   3. Build: assume ravn-github-ci-<repo> via OIDC (the reusable workflow
+#      names the role after this repository: ravn-github-ci-ravn-hook-echo),
+#      build ./Dockerfile, push <ecr>/ravn/svc-hook-echo:sha-<7> (IMMUTABLE).
+#   4. Write the lane record, argo-apps/lanes/prod/svc-hook-echo.yaml
+#      (image.tag: sha-<7>), as ravn-deploy[bot]. Nothing is committed here.
+#   5. ArgoCD (argo-apps apps/svc-hook-echo.yaml, the $lanes valueFile) syncs
+#      -> rollout.
+#
+# A manual dispatch is a dry run unless told otherwise: it decides, builds, and
+# prints the record it would write, but pushes nothing to ECR and writes no
+# record. Untick dry_run to deploy by hand.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Decide and build only: push nothing to ECR, write no record"
+        type: boolean
+        default: true
+      rollback_to:
+        description: "Roll back: re-record an image an earlier run built (sha-<7> or a full commit SHA). Builds nothing; set dry_run=false to write."
+        type: string
+        default: ""
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "deploy/**"
+
+# contents: read is all this repository grants. The record is written in
+# argo-apps by the ravn-deploy App (org secrets, ravn-ops#214); id-token: write
+# is the OIDC exchange for the ECR push role.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  check:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  deploy:
+    needs: check
+    # deploy-v1.1.0 = ad1c578 (ravn-actions#19, rollback_to: ravn-actions#22). Bump the tag on purpose.
+    uses: RavnSecurity/ravn-actions/.github/workflows/deploy.yml@deploy-v1.1.0
+    permissions:
+      contents: read
+      id-token: write
+    with:
+      images: '[{"name":"svc-hook-echo"}]'
+      aws_account_id: "244689414108"
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+      rollback_to: ${{ github.event_name == 'workflow_dispatch' && inputs.rollback_to || '' }}
+    secrets: inherit # RAVN_DEPLOY_APP_ID / RAVN_DEPLOY_APP_PRIVATE_KEY

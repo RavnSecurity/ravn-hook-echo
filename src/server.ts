@@ -19,8 +19,13 @@ import { VIEW_CSS, VIEW_HTML, VIEW_JS, VIEWER_HEADERS } from "./viewer.js";
 /** A packet is metadata only; 1 MiB is far more than any stage sends. */
 export const MAX_BODY_BYTES = 1024 * 1024;
 
+/** Why a delivery to an unconfigured hook is refused. */
+export const NOT_CONFIGURED =
+  "not configured: RAVN_HOOK_SECRET is not set, so this hook cannot verify deliveries";
+
 export interface ServerDeps {
-  secret: string;
+  /** Null: not configured. Every delivery is refused with 503, and nothing about it is stored. */
+  secret: string | null;
   viewToken: string;
   showValues: boolean;
   retentionHours: number;
@@ -71,7 +76,8 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
       case "/view/api/deliveries":
         return deliveries(req, res, deps);
       case "/healthz":
-        return send(res, 200, { ok: true });
+        // Always 200 while the process serves: the liveness probe restarts on anything else.
+        return send(res, 200, { ok: true, configured: deps.secret !== null });
       case "/":
         return send(res, 200, {
           name: "ravn-hook-echo",
@@ -128,6 +134,7 @@ function deliveries(req: IncomingMessage, res: ServerResponse, deps: ServerDeps)
       schema: { id: deps.schemaId, source: schema.source.kind },
       retentionHours: deps.retentionHours,
       showValues: deps.showValues,
+      configured: deps.secret !== null,
       account: deps.ravn?.status() ?? null,
       deliveries: list,
     }),
@@ -159,6 +166,10 @@ async function receive(
   path: string,
   route: NonNullable<ReturnType<typeof parseRoute>>,
 ): Promise<void> {
+  // Not configured: refuse before reading anything. Ravn retries a 5xx, so
+  // nothing is lost while the secret is on its way.
+  if (deps.secret === null) return send(res, 503, { error: NOT_CONFIGURED });
+
   const started = deps.now?.() ?? Date.now();
   const body = await readBody(req);
   if (body === "too-large") return send(res, 413, { error: "body too large" });
