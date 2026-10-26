@@ -43,5 +43,9 @@
     "@biomejs/biome": "2.4.16",
     "@types/node": "^22.18.0",
     "typescript": "^5.9.2"
+  },
+  "optionalDependencies": {
+    "@ngrok/ngrok": "^1.7.0",
+    "cloudflared": "^0.7.3"
   }
 }
