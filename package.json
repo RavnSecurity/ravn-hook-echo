@@ -15,7 +15,7 @@
   },
   "packageManager": "pnpm@10.17.1",
   "bin": {
-    "ravn-hook-echo": "./bin/ravn-hook-echo.js"
+    "ravn-hook-echo": "bin/ravn-hook-echo.js"
   },
   "files": [
     "bin",

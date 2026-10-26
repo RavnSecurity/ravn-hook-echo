@@ -1,7 +1,8 @@
 name: release
 
-# A tag v<version> publishes the container image to GHCR and, when an NPM_TOKEN
-# secret is set, the package to npm so `npx ravn-hook-echo` works.
+# A tag v<version> publishes the container image to GHCR, the package to GitHub
+# Packages' npm registry as @ravnsecurity/ravn-hook-echo, and, when an NPM_TOKEN
+# secret is set, the package to npmjs so `npx ravn-hook-echo` works.
 on:
   push:
     tags: ["v*"]
@@ -47,8 +48,42 @@ jobs:
           docker push "$image:$version"
           docker push "$image:latest"
 
-      - name: npm
-        if: ${{ env.NODE_AUTH_TOKEN != '' }}
+      # npm refuses --provenance from a private source repository, so it's passed
+      # only once the repo is public.
+      - name: provenance when public
+        env:
+          PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [ "$PRIVATE" = false ]; then
+            echo "PROVENANCE=--provenance" >> "$GITHUB_ENV"
+          else
+            echo "::notice::private repository: publishing without provenance"
+          fi
+
+      - name: npmjs
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --provenance --access public
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::notice::npmjs skipped: no NPM_TOKEN secret"
+            exit 0
+          fi
+          # shellcheck disable=SC2086 # empty when private
+          npm publish $PROVENANCE --access public
+
+      # GitHub's npm registry takes only names scoped to the owner, so this
+      # publishes a packed copy renamed @ravnsecurity/ravn-hook-echo. package.json
+      # keeps the unscoped name npmjs and the docs use. No provenance: npm
+      # attests to npmjs only.
+      - name: GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          stage="$RUNNER_TEMP/github-package"
+          mkdir -p "$stage"
+          npm pack --pack-destination "$stage"
+          tar -xzf "$stage"/*.tgz -C "$stage"
+          cd "$stage/package"
+          npm pkg set name=@ravnsecurity/ravn-hook-echo
+          echo "//npm.pkg.github.com/:_authToken=\${NODE_AUTH_TOKEN}" > .npmrc
+          npm publish --ignore-scripts --registry https://npm.pkg.github.com
