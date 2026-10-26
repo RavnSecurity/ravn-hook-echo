@@ -73,8 +73,10 @@ jobs:
 
       # GitHub's npm registry takes only names scoped to the owner, so this
       # publishes a packed copy renamed @ravnsecurity/ravn-hook-echo. package.json
-      # keeps the unscoped name npmjs and the docs use. No provenance: npm
-      # attests to npmjs only.
+      # keeps the unscoped name npmjs and the docs use. The copy is already
+      # built, so its scripts go: npm runs `prepare` even with --ignore-scripts,
+      # and the copy has no sources to build. No provenance: npm attests to
+      # npmjs only.
       - name: GitHub Packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -85,5 +87,6 @@ jobs:
           tar -xzf "$stage"/*.tgz -C "$stage"
           cd "$stage/package"
           npm pkg set name=@ravnsecurity/ravn-hook-echo
+          npm pkg delete scripts
           echo "//npm.pkg.github.com/:_authToken=\${NODE_AUTH_TOKEN}" > .npmrc
           npm publish --ignore-scripts --registry https://npm.pkg.github.com

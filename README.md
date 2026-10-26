@@ -74,7 +74,7 @@ docker run --rm -p 8080:8080 -e RAVN_HOOK_SECRET='<secret>' ravn-hook-echo
 At start it prints one URL per stage and the viewer's private URL:
 
 ```text
-ravn-hook-echo 0.1.0 listening on 0.0.0.0:8080
+ravn-hook-echo 0.1.1 listening on 0.0.0.0:8080
 schema: published (https://ravnsecurity.io/schema/stage-contract.v1.json)
 hook URLs, one per stage:
   http://localhost:8080/classify
@@ -103,7 +103,7 @@ viewer URL with it, exactly as above:
 
 ```text
 tunnel: opening (cloudflare)
-ravn-hook-echo 0.1.0 listening on 0.0.0.0:8080
+ravn-hook-echo 0.1.1 listening on 0.0.0.0:8080
 tunnel: cloudflare, public at https://quiet-words-here.trycloudflare.com
 hook URLs, one per stage:
   https://quiet-words-here.trycloudflare.com/classify
