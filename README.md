@@ -45,6 +45,17 @@ secret.
   empty value says why it is empty, such as `not-observed` or `not-run`.
 - A delivery is retried until the hook answers `2xx`. A packet is never dropped.
 
+## Install
+
+Each release tag publishes it three ways:
+
+- **npm:** `npx ravn-hook-echo`. Use this one.
+- **Container:** `ghcr.io/ravnsecurity/ravn-hook-echo`, tagged with the version
+  and `latest`.
+- **GitHub Packages:** `@ravnsecurity/ravn-hook-echo` on
+  `https://npm.pkg.github.com`. GitHub's npm registry needs a token to install
+  even a public package, which is why npmjs is the one to use.
+
 ## Run it
 
 With Node 22 or later:
