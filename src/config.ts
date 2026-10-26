@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { HOOKABLE, type HookableStage, isHookable } from "./stages.js";
+import { TUNNEL_PROVIDERS, type TunnelConfig, type TunnelProvider } from "./tunnel.js";
 
 export interface Config {
   port: number;
@@ -29,6 +30,8 @@ export interface Config {
   stateFile: string;
   /** The stages this hook answers when it has a service account. */
   answerStages: HookableStage[];
+  /** Open a public HTTPS address at start; its URL replaces `publicBaseUrl`. */
+  tunnel: TunnelConfig | null;
 }
 
 export const DEFAULT_RAVN_URL = "https://apps.ravnsecurity.io";
@@ -44,7 +47,7 @@ export function isLoopback(host: string): boolean {
 
 export const USAGE = `ravn-hook-echo — a reference Ravn Hook for every triage stage
 
-  ravn-hook-echo [--port N] [--host H] [--show-values] [--no-fetch-schema]
+  ravn-hook-echo [--port N] [--host H] [--tunnel[=cloudflare|ngrok]] [--show-values] [--no-fetch-schema]
 
 Environment
   RAVN_HOOK_SECRET  the signing secret Ravn showed when the hook was created.
@@ -55,6 +58,9 @@ Environment
                     generated and printed once
   RETENTION_HOURS   how long deliveries stay in memory (default 24)
   PUBLIC_BASE_URL   the URL Ravn reaches this hook on, for the printed addresses
+  TUNNEL            cloudflare or ngrok: as --tunnel. Not with PUBLIC_BASE_URL
+  NGROK_AUTHTOKEN   needed for the ngrok tunnel; never printed
+  NGROK_DOMAIN      the ngrok tunnel's fixed address, when you have one
 
 As a service account: answer every stage, and read over MCP
   RAVN_UNWRAP_TOKEN       the one-time unwrap token from the service account in Ravn
@@ -64,6 +70,9 @@ As a service account: answer every stage, and read over MCP
   RAVN_URL                where Ravn is (default https://apps.ravnsecurity.io)
 
 Flags
+  --tunnel[=P]      open a public HTTPS address at start and print it: a
+                    Cloudflare quick tunnel (the default; no account, a new
+                    address each start) or ngrok (needs NGROK_AUTHTOKEN).
   --show-values     the viewer shows packet values, not only their shape.
                     Refused unless --host is 127.0.0.1 or ::1.
   --no-fetch-schema use the vendored schema; do not fetch the published one.
@@ -84,7 +93,11 @@ export function parseConfig(
     }
     const name = a.slice(2);
     const next = argv[i + 1];
-    if ((name === "port" || name === "host") && next !== undefined && !next.startsWith("--")) {
+    const takesValue =
+      name === "port" ||
+      name === "host" ||
+      (name === "tunnel" && (TUNNEL_PROVIDERS as readonly string[]).includes(next ?? ""));
+    if (takesValue && next !== undefined && !next.startsWith("--")) {
       flags.set(name, next);
       i++;
     } else {
@@ -93,7 +106,7 @@ export function parseConfig(
   }
   if (flags.has("help")) return "help";
   for (const k of flags.keys()) {
-    if (!["port", "host", "show-values", "no-fetch-schema"].includes(k)) {
+    if (!["port", "host", "show-values", "no-fetch-schema", "tunnel"].includes(k)) {
       throw new ConfigError(`unknown flag: --${k}`);
     }
   }
@@ -106,6 +119,17 @@ export function parseConfig(
   if (showValues && !isLoopback(host)) {
     throw new ConfigError(
       `--show-values is refused on ${host}: it is for your own laptop. Bind to 127.0.0.1 or ::1.`,
+    );
+  }
+  const tunnel = tunnelOf(flags.get("tunnel"), env);
+  if (showValues && tunnel) {
+    throw new ConfigError(
+      "--show-values is refused with a tunnel: the viewer would be on a public address.",
+    );
+  }
+  if (tunnel && env.PUBLIC_BASE_URL?.trim()) {
+    throw new ConfigError(
+      "set a tunnel or PUBLIC_BASE_URL, not both: the tunnel's address is the public one",
     );
   }
   const retentionHours = integer(env.RETENTION_HOURS ?? "24", "RETENTION_HOURS", 0, 24 * 365);
@@ -140,7 +164,33 @@ export function parseConfig(
     accessTokenOnly,
     stateFile: env.RAVN_STATE_FILE?.trim() || DEFAULT_STATE_FILE,
     answerStages: stagesOf(env.ANSWER_STAGES),
+    tunnel,
   };
+}
+
+/** `--tunnel` (Cloudflare), `--tunnel=<provider>`, or `TUNNEL=<provider>`; the flag wins. */
+function tunnelOf(
+  flag: string | true | undefined,
+  env: Readonly<Record<string, string | undefined>>,
+): TunnelConfig | null {
+  const raw = flag === true ? "cloudflare" : (flag ?? env.TUNNEL ?? "").trim().toLowerCase();
+  if (!raw) return null;
+  if (!(TUNNEL_PROVIDERS as readonly string[]).includes(raw)) {
+    throw new ConfigError(`tunnel: "${raw}" is not one of ${TUNNEL_PROVIDERS.join(", ")}`);
+  }
+  const provider = raw as TunnelProvider;
+  if (provider === "cloudflare") return { provider };
+  const authtoken = env.NGROK_AUTHTOKEN?.trim();
+  if (!authtoken) {
+    throw new ConfigError(
+      "the ngrok tunnel needs NGROK_AUTHTOKEN (from https://dashboard.ngrok.com)",
+    );
+  }
+  const domain =
+    env.NGROK_DOMAIN?.trim()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/+$/, "") || null;
+  return { provider, authtoken, domain };
 }
 
 /** `ANSWER_STAGES`: unset or `all` is all six, `none` is none, else a comma-separated list. */

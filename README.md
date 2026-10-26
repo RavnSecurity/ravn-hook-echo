@@ -78,8 +78,52 @@ viewer (keep this URL private; the token is the part after #k=):
 ```
 
 Ravn has to reach the hook over the internet. Run it somewhere with a public
-HTTPS address, or put a tunnel in front of your laptop, and set `PUBLIC_BASE_URL`
-to that address so the printed URLs are the ones to paste into Ravn.
+HTTPS address and set `PUBLIC_BASE_URL` to that address, so the printed URLs are
+the ones to paste into Ravn. On a laptop, `--tunnel` does that for you.
+
+## Run it on your laptop
+
+```bash
+RAVN_HOOK_SECRET='<secret>' npx ravn-hook-echo --tunnel
+```
+
+`--tunnel` opens a public HTTPS address at start and prints the hook URLs and the
+viewer URL with it, exactly as above:
+
+```text
+tunnel: opening (cloudflare)
+ravn-hook-echo 0.1.0 listening on 0.0.0.0:8080
+tunnel: cloudflare, public at https://quiet-words-here.trycloudflare.com
+hook URLs, one per stage:
+  https://quiet-words-here.trycloudflare.com/classify
+  …
+```
+
+| Provider | How | What you get |
+| --- | --- | --- |
+| Cloudflare (the default) | `--tunnel`, or `TUNNEL=cloudflare` | A quick tunnel. No account. A **new random** `https://<words>.trycloudflare.com` address each start |
+| ngrok | `--tunnel=ngrok`, or `TUNNEL=ngrok`, with `NGROK_AUTHTOKEN` | Your ngrok account's tunnel. Set `NGROK_DOMAIN` to the fixed domain ngrok's free plan includes, and the address stays the same across restarts |
+
+**Use ngrok with `NGROK_DOMAIN` if you restart often.** A hook's delivery
+address is fixed in Ravn today, so a random Cloudflare address means creating a
+new hook in Ravn after each restart, until delivery addresses can be edited
+([ravn-platform#723](https://github.com/RavnSecurity/ravn-platform/issues/723)).
+
+- **The address is public.** Anyone who finds it can send to it. The signature
+  check refuses anything not signed with `RAVN_HOOK_SECRET`, and the hook stores
+  nothing about what it refuses. The viewer still needs its token.
+- **Cloudflare downloads `cloudflared` on first use**, from Cloudflare's GitHub
+  releases, into the `cloudflared` package's own folder. Later starts reuse it.
+- **The tunnel libraries are optional dependencies**, loaded only with
+  `--tunnel`. Installed with `--omit=optional`, `--tunnel` says which package to
+  add.
+- **In a container**, `-e TUNNEL=cloudflare` works as is:
+  `docker run --rm -e RAVN_HOOK_SECRET='<secret>' -e TUNNEL=cloudflare ravn-hook-echo`.
+- A tunnel that fails to open stops the hook with the provider's reason, and it
+  closes with the hook on Ctrl-C or `SIGTERM`.
+- `TUNNEL` and `PUBLIC_BASE_URL` together are refused, as is `--show-values`
+  with a tunnel: the viewer would be on a public address. `NGROK_AUTHTOKEN` is
+  never printed.
 
 ## Point a program at it
 
@@ -452,9 +496,12 @@ check a substring search.
 | `PORT`, `--port` | `8080` | Listen port |
 | `HOST`, `--host` | `0.0.0.0` | Bind address |
 | `PUBLIC_BASE_URL` | `http://localhost:<port>` | The address Ravn reaches this hook on, used in the printed URLs |
+| `TUNNEL`, `--tunnel[=P]` | off | Open a public HTTPS address at start: `cloudflare` (the default for a bare `--tunnel`) or `ngrok`. Not with `PUBLIC_BASE_URL` |
+| `NGROK_AUTHTOKEN` | none | Needed for the ngrok tunnel. Never printed |
+| `NGROK_DOMAIN` | none | The ngrok tunnel's fixed address |
 | `VIEW_TOKEN` | random, printed at start | The viewer's token. Set, it is never printed |
 | `RETENTION_HOURS` | `24` | How long deliveries stay in memory |
-| `--show-values` | off | Show packet values in the viewer. Loopback only |
+| `--show-values` | off | Show packet values in the viewer. Loopback only, and not with a tunnel |
 | `--no-fetch-schema` | off | Use the vendored schema without fetching the published one |
 | `RAVN_UNWRAP_TOKEN` | none | The service account's one-time unwrap token. Set, the hook answers and reads |
 | `RAVN_ACCESS_TOKEN_ONLY` | none | Instead, an access token to use as is, never renewed |

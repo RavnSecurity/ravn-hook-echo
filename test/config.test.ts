@@ -90,3 +90,61 @@ test("service account settings", () => {
     /not both/,
   );
 });
+
+test("--tunnel: Cloudflare by default, or the provider named by the flag or TUNNEL", () => {
+  const tunnel = (argv: string[], extra: Record<string, string> = {}) => {
+    const c = parseConfig(argv, { ...env, NGROK_AUTHTOKEN: "n", ...extra });
+    assert.ok(c !== "help");
+    return c.tunnel;
+  };
+  assert.equal(tunnel([]), null);
+  assert.deepEqual(tunnel(["--tunnel"]), { provider: "cloudflare" });
+  assert.deepEqual(tunnel(["--tunnel=cloudflare"]), { provider: "cloudflare" });
+  assert.deepEqual(tunnel(["--tunnel", "ngrok"]), {
+    provider: "ngrok",
+    authtoken: "n",
+    domain: null,
+  });
+  assert.deepEqual(tunnel([], { TUNNEL: "Cloudflare" }), { provider: "cloudflare" });
+  assert.deepEqual(tunnel(["--tunnel=cloudflare"], { TUNNEL: "ngrok" }), {
+    provider: "cloudflare",
+  });
+  assert.deepEqual(tunnel([], { TUNNEL: "ngrok", NGROK_DOMAIN: "https://my-hook.ngrok.app/" }), {
+    provider: "ngrok",
+    authtoken: "n",
+    domain: "my-hook.ngrok.app",
+  });
+  // A bare --tunnel before another flag does not swallow it.
+  const c = parseConfig(["--tunnel", "--port", "9000"], env);
+  assert.ok(c !== "help");
+  assert.deepEqual([c.tunnel, c.port], [{ provider: "cloudflare" }, 9000]);
+
+  assert.throws(() => tunnel(["--tunnel=localtunnel"]), /"localtunnel" is not one of/);
+  assert.throws(() => tunnel([], { TUNNEL: "bore" }), /"bore" is not one of/);
+});
+
+test("--tunnel: ngrok needs NGROK_AUTHTOKEN", () => {
+  assert.throws(() => parseConfig(["--tunnel=ngrok"], env), /needs NGROK_AUTHTOKEN/);
+  assert.throws(
+    () => parseConfig([], { ...env, TUNNEL: "ngrok", NGROK_AUTHTOKEN: "  " }),
+    /needs NGROK_AUTHTOKEN/,
+  );
+});
+
+test("a tunnel with PUBLIC_BASE_URL is ambiguous, and refused", () => {
+  assert.throws(
+    () => parseConfig(["--tunnel"], { ...env, PUBLIC_BASE_URL: "https://hooks.example.com" }),
+    /not both/,
+  );
+  assert.throws(
+    () => parseConfig([], { ...env, TUNNEL: "cloudflare", PUBLIC_BASE_URL: "https://x.example" }),
+    /not both/,
+  );
+});
+
+test("--show-values is refused with a tunnel, even on loopback: the viewer is public", () => {
+  assert.throws(
+    () => parseConfig(["--show-values", "--host", "127.0.0.1", "--tunnel"], env),
+    /refused with a tunnel/,
+  );
+});
