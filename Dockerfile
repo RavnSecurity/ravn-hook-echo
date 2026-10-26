@@ -12,6 +12,10 @@ COPY test ./test
 RUN pnpm run build && pnpm prune --prod --ignore-scripts
 
 FROM node:22-alpine
+# The source label links the ghcr.io package to the repository.
+LABEL org.opencontainers.image.source="https://github.com/RavnSecurity/ravn-hook-echo" \
+      org.opencontainers.image.description="A reference Ravn Hook for every triage stage." \
+      org.opencontainers.image.licenses="Apache-2.0"
 ENV NODE_ENV=production PORT=8080 HOST=0.0.0.0
 WORKDIR /app
 COPY --chown=node:node --from=build /app/node_modules ./node_modules
