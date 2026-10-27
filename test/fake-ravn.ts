@@ -45,7 +45,7 @@ export class FakeRavn {
   private close_: () => Promise<void> = async () => {};
 
   newUnwrapToken(): string {
-    const t = `unwrap-${SECRET_MARK}-${randomBytes(6).toString("hex")}`;
+    const t = `rvu_${SECRET_MARK}-${randomBytes(6).toString("hex")}`;
     this.unwrap.add(t);
     return t;
   }

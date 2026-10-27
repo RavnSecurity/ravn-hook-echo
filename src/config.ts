@@ -32,6 +32,8 @@ export interface Config {
   answerStages: HookableStage[];
   /** Open a public HTTPS address at start; its URL replaces `publicBaseUrl`. */
   tunnel: TunnelConfig | null;
+  /** `--forget`: remove a signing secret saved at an earlier prompt before starting. */
+  forget: boolean;
 }
 
 export const DEFAULT_RAVN_URL = "https://apps.ravnsecurity.io";
@@ -47,7 +49,7 @@ export function isLoopback(host: string): boolean {
 
 export const USAGE = `ravn-hook-echo — a reference Ravn Hook for every triage stage
 
-  ravn-hook-echo [--port N] [--host H] [--tunnel[=cloudflare|ngrok]] [--show-values] [--no-fetch-schema]
+  ravn-hook-echo [--port N] [--host H] [--tunnel[=cloudflare|ngrok]] [--show-values] [--no-fetch-schema] [--forget]
 
 Environment
   RAVN_HOOK_SECRET  the signing secret Ravn showed when the hook was created.
@@ -76,7 +78,17 @@ Flags
   --show-values     the viewer shows packet values, not only their shape.
                     Refused unless --host is 127.0.0.1 or ::1.
   --no-fetch-schema use the vendored schema; do not fetch the published one.
-  --help`;
+  --forget          remove the signing secret saved by an earlier prompt, then start.
+  --help
+
+On a terminal (stdin and stdout both a TTY; docker run -it for the container)
+  Once the addresses are printed, it asks for what is missing, with no echo:
+  the unwrap token (unless RAVN_UNWRAP_TOKEN, RAVN_ACCESS_TOKEN_ONLY or a saved
+  refresh token is there; Enter skips it), then the hook's signing secret
+  (unless RAVN_HOOK_SECRET or a saved one is). The secret takes effect at once
+  and is saved in RAVN_STATE_FILE, mode 600, so a restart does not ask again.
+  An environment variable always wins over the saved value. Without a
+  terminal nothing is asked.`;
 
 export function parseConfig(
   argv: readonly string[],
@@ -106,7 +118,7 @@ export function parseConfig(
   }
   if (flags.has("help")) return "help";
   for (const k of flags.keys()) {
-    if (!["port", "host", "show-values", "no-fetch-schema", "tunnel"].includes(k)) {
+    if (!["port", "host", "show-values", "no-fetch-schema", "tunnel", "forget"].includes(k)) {
       throw new ConfigError(`unknown flag: --${k}`);
     }
   }
@@ -165,6 +177,7 @@ export function parseConfig(
     stateFile: env.RAVN_STATE_FILE?.trim() || DEFAULT_STATE_FILE,
     answerStages: stagesOf(env.ANSWER_STAGES),
     tunnel,
+    forget: flags.get("forget") === true,
   };
 }
 

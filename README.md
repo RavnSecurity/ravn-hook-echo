@@ -94,6 +94,46 @@ the ones to paste into Ravn. On a laptop, `--tunnel` does that for you.
 
 ## Run it on your laptop
 
+On a terminal, it asks for what it needs once the address is up, so it takes
+three steps:
+
+1. In Ravn, create a service account and **Get an unwrap token**
+   ([below](#run-it-as-a-service-account)).
+2. Start the hook and paste the token when asked:
+
+   ```bash
+   npx ravn-hook-echo --tunnel
+   ```
+
+   ```text
+   tunnel: cloudflare, public at https://quiet-words-here.trycloudflare.com
+   …
+   Unwrap token, from Service accounts in Ravn (Enter to skip: receive only):
+   service account on https://apps.ravnsecurity.io: ok; answers …; reads over MCP
+   Create the hook in Ravn with delivery address https://quiet-words-here.trycloudflare.com/, then paste its signing secret:
+   ready: deliveries are verified with the signing secret
+   ```
+
+3. In Ravn, create the hook with that address, paste its signing secret back
+   into the prompt, and send a stage to it. It takes effect at once: no restart,
+   and the viewer URL is printed then.
+
+- **Only on a terminal**: stdin and stdout must both be a TTY. In a container
+  that means `docker run -it`. Without one (Docker without `-it`, Kubernetes,
+  CI) nothing is asked and it starts as before.
+- **Nothing you type is echoed or printed.** An obviously wrong paste (empty,
+  with whitespace, or the unwrap token in the secret prompt and the other way
+  round) is refused with one line and asked again. Enter at the token prompt
+  skips it: the hook receives only. Ctrl-C stops the hook.
+- **The secret is saved** in the state file (`RAVN_STATE_FILE`, mode 600, beside
+  the refresh token), so a restart doesn't ask again. `--forget` removes it, or
+  delete the file.
+- **The environment wins.** `RAVN_HOOK_SECRET` is used over a saved secret and
+  never asked for; `RAVN_UNWRAP_TOKEN`, `RAVN_ACCESS_TOKEN_ONLY` or a saved
+  refresh token mean the token is not asked for.
+
+Or set it all up front, as on a server:
+
 ```bash
 RAVN_HOOK_SECRET='<secret>' npx ravn-hook-echo --tunnel
 ```
@@ -129,7 +169,9 @@ new hook in Ravn after each restart, until delivery addresses can be edited
   `--tunnel`. Installed with `--omit=optional`, `--tunnel` says which package to
   add.
 - **In a container**, `-e TUNNEL=cloudflare` works as is:
-  `docker run --rm -e RAVN_HOOK_SECRET='<secret>' -e TUNNEL=cloudflare ravn-hook-echo`.
+  `docker run --rm -e RAVN_HOOK_SECRET='<secret>' -e TUNNEL=cloudflare ravn-hook-echo`,
+  or `docker run --rm -it -e TUNNEL=cloudflare -v ravn-hook-echo:/home/node/.ravn-hook-echo ravn-hook-echo`
+  to be asked.
 - A tunnel that fails to open stops the hook with the provider's reason, and it
   closes with the hook on Ctrl-C or `SIGTERM`.
 - `TUNNEL` and `PUBLIC_BASE_URL` together are refused, as is `--show-values`
@@ -141,7 +183,8 @@ new hook in Ravn after each restart, until delivery addresses can be edited
 1. In Ravn, an org admin creates a hook for the program. Its delivery URL is one
    of the URLs above, such as `https://hooks.example.com/assess`.
 2. Ravn shows the hook's signing secret **once**. Start ravn-hook-echo with it as
-   `RAVN_HOOK_SECRET`.
+   `RAVN_HOOK_SECRET`, or paste it into the prompt of one already running on a
+   terminal.
 3. In the program's stage settings, send a stage to the hook and publish. Cases
    that arrive after that are delivered to it.
 4. Open the viewer URL. Each delivery appears within a few seconds.
@@ -172,7 +215,9 @@ docker run --rm -p 8080:8080 \
   ravn-hook-echo
 ```
 
-Or with Node: `RAVN_HOOK_SECRET=… RAVN_UNWRAP_TOKEN=… npx ravn-hook-echo`.
+Or with Node: `RAVN_HOOK_SECRET=… RAVN_UNWRAP_TOKEN=… npx ravn-hook-echo`. On a
+terminal, leave both out and paste them when asked
+([Run it on your laptop](#run-it-on-your-laptop)).
 
 ### How it keeps its token
 
@@ -503,7 +548,7 @@ check a substring search.
 
 | Setting | Default | |
 | --- | --- | --- |
-| `RAVN_HOOK_SECRET` | none | The signing secret Ravn showed when the hook was created. Unset, the hook boots **unconfigured**: every delivery is answered `503` and nothing is stored |
+| `RAVN_HOOK_SECRET` | none | The signing secret Ravn showed when the hook was created. Wins over a saved one. Unset, and none saved or typed at the prompt, the hook boots **unconfigured**: every delivery is answered `503` and nothing is stored |
 | `PORT`, `--port` | `8080` | Listen port |
 | `HOST`, `--host` | `0.0.0.0` | Bind address |
 | `PUBLIC_BASE_URL` | `http://localhost:<port>` | The address Ravn reaches this hook on, used in the printed URLs |
@@ -514,9 +559,10 @@ check a substring search.
 | `RETENTION_HOURS` | `24` | How long deliveries stay in memory |
 | `--show-values` | off | Show packet values in the viewer. Loopback only, and not with a tunnel |
 | `--no-fetch-schema` | off | Use the vendored schema without fetching the published one |
+| `--forget` | off | Remove the signing secret saved by an earlier prompt, then start |
 | `RAVN_UNWRAP_TOKEN` | none | The service account's one-time unwrap token. Set, the hook answers and reads |
 | `RAVN_ACCESS_TOKEN_ONLY` | none | Instead, an access token to use as is, never renewed |
-| `RAVN_STATE_FILE` | `~/.ravn-hook-echo/state.json` | Where the refresh token is kept, mode 600 |
+| `RAVN_STATE_FILE` | `~/.ravn-hook-echo/state.json` | Where the refresh token, and a signing secret typed at the prompt, are kept, mode 600 |
 | `ANSWER_STAGES` | all six | The stages to answer, comma-separated, or `none` |
 | `RAVN_URL` | `https://apps.ravnsecurity.io` | Where Ravn is |
 
@@ -534,8 +580,12 @@ before its secret is written:
 - Without `VIEW_TOKEN` too, no viewer token is generated for printing:
   there is nothing to see.
 
-Without `RAVN_UNWRAP_TOKEN` and without a state file, it receives only, and the
-viewer says answers and reads are off.
+Without `RAVN_UNWRAP_TOKEN` and without a saved refresh token, it receives only,
+and the viewer says answers and reads are off.
+
+On a terminal it asks for the missing token and secret instead
+([Run it on your laptop](#run-it-on-your-laptop)); a secret typed there takes
+effect at once.
 
 ### Logs
 
