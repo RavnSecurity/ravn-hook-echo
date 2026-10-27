@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { readState, updateState } from "./state.js";
 
 /**
  * The hook as a service account: the identity it answers and reads as.
@@ -337,36 +336,25 @@ export class ServiceAccount {
   }
 
   private readState(): StateFile | null {
-    let text: string;
-    try {
-      text = readFileSync(this.opts.stateFile, "utf8");
-    } catch {
-      return null;
-    }
-    try {
-      const s = JSON.parse(text) as Partial<StateFile>;
-      if (typeof s.refreshToken !== "string" || !s.refreshToken) return null;
-      return {
-        refreshToken: s.refreshToken,
-        refreshExpiresAt: typeof s.refreshExpiresAt === "string" ? s.refreshExpiresAt : null,
-        unwrap: typeof s.unwrap === "string" ? s.unwrap : null,
-        savedAt: typeof s.savedAt === "string" ? s.savedAt : "",
-      };
-    } catch {
+    const s = readState(this.opts.stateFile);
+    if (s === "unreadable") {
       this.log(`service account: ${this.opts.stateFile} is not JSON; ignoring it`);
       return null;
     }
+    if (!s || typeof s.refreshToken !== "string" || !s.refreshToken) return null;
+    return {
+      refreshToken: s.refreshToken,
+      refreshExpiresAt: typeof s.refreshExpiresAt === "string" ? s.refreshExpiresAt : null,
+      unwrap: typeof s.unwrap === "string" ? s.unwrap : null,
+      savedAt: typeof s.savedAt === "string" ? s.savedAt : "",
+    };
   }
 
-  /** Written to a temporary file with mode 600, then renamed over: never half a token. */
+  /** Only the chain's keys: a signing secret saved beside them is kept. */
   private saveState(state: StateFile): void {
     const path = this.opts.stateFile;
-    const tmp = `${path}.${process.pid}.tmp`;
     try {
-      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-      writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-      chmodSync(tmp, 0o600);
-      renameSync(tmp, path);
+      updateState(path, { ...state });
     } catch (e) {
       this.log(
         `service account: could not save ${path} (${(e as NodeJS.ErrnoException).code ?? "error"}). ` +

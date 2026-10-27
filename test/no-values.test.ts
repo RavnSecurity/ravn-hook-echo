@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { HOOKABLE } from "../src/stages.js";
 import { CANARY, envelope } from "./fixtures.js";
-import { deliver, type Running, start, TOKEN } from "./helpers.js";
+import { deliver, type Running, SECRET, start, TOKEN } from "./helpers.js";
 
 /**
  * ❗THE VIEWER CANNOT LEAK. Every fixture packet carries canary strings in its
@@ -58,6 +58,13 @@ for (const path of ["/view", "/view.js", "/view.css", "/api/deliveries", "/view/
     assert.equal(text.includes(CANARY), false, `${path} leaked a canary`);
   });
 }
+
+test("no viewer response carries the signing secret, however it was set (env, saved or typed)", async () => {
+  for (const path of ["/view", "/view.js", "/view.css", "/api/deliveries", "/healthz"]) {
+    const text = await (await fetch(`${h.base}${path}`, auth)).text();
+    assert.equal(text.includes(SECRET), false, `${path} carried the signing secret`);
+  }
+});
 
 test("a canary used as a KEY does not show either: undeclared keys are redacted", async () => {
   const text = await (await fetch(`${h.base}/api/deliveries`, auth)).text();

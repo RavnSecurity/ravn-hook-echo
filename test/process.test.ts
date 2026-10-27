@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { secretQuestion, TOKEN_QUESTION } from "../src/prompt.js";
 import { FakeRavn, SECRET_MARK } from "./fake-ravn.js";
 import { CANARY, envelope } from "./fixtures.js";
 import { deliver } from "./helpers.js";
@@ -41,9 +42,9 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-async function run(env: Record<string, string>): Promise<Hook> {
+async function run(env: Record<string, string>, args: string[] = []): Promise<Hook> {
   const port = await freePort();
-  const child: ChildProcess = spawn(process.execPath, [BIN, "--no-fetch-schema"], {
+  const child: ChildProcess = spawn(process.execPath, [BIN, "--no-fetch-schema", ...args], {
     env: { PATH: process.env.PATH ?? "", HOST: "127.0.0.1", PORT: String(port), ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -102,6 +103,8 @@ test("unconfigured, it boots, serves /healthz, refuses deliveries with 503, and 
     assert.equal(view.account, null, "no unwrap token and no state: answers and reads off");
     assert.match(hook.output(), /not configured/);
     assert.match(hook.output(), /no service account: answers and reads off/);
+    assert.equal(hook.output().includes(TOKEN_QUESTION), false, "no terminal: no prompt");
+    assert.doesNotMatch(hook.output(), /paste its signing secret/);
   } finally {
     await hook.stop();
   }
@@ -166,4 +169,131 @@ test("state survives a restart on a spent unwrap token, and nothing it logs carr
 
   assertClean(first.output());
   assertClean(second.output());
+});
+
+function stateWith(content: Record<string, unknown>): string {
+  const file = join(mkdtempSync(join(tmpdir(), "echo-proc-")), "state.json");
+  writeFileSync(file, JSON.stringify(content), { mode: 0o600 });
+  return file;
+}
+
+test("a signing secret saved at an earlier prompt configures it, and is not asked for or printed", async () => {
+  const stateFile = stateWith({ hookSecret: HOOK_SECRET });
+  const hook = await run({ VIEW_TOKEN, RAVN_STATE_FILE: stateFile });
+  try {
+    const res = await deliver(hook.base, "/classify", envelope("classify"), {
+      stage: "classify",
+      secret: HOOK_SECRET,
+    });
+    assert.equal(res.status, 200);
+    assert.equal((await viewer(hook.base)).configured, true);
+    assert.equal((await viewer(hook.base)).account, null, "a secret alone is no service account");
+  } finally {
+    await hook.stop();
+  }
+  assert.match(hook.output(), /signing secret: the one saved in/);
+  assert.doesNotMatch(hook.output(), /not configured/);
+  assertClean(hook.output());
+});
+
+test("RAVN_HOOK_SECRET wins over a saved one", async () => {
+  const stateFile = stateWith({ hookSecret: `saved-${SECRET_MARK}` });
+  const hook = await run({ VIEW_TOKEN, RAVN_STATE_FILE: stateFile, RAVN_HOOK_SECRET: HOOK_SECRET });
+  try {
+    const opts = { stage: "classify" as const };
+    const saved = await deliver(hook.base, "/classify", envelope("classify"), {
+      ...opts,
+      secret: `saved-${SECRET_MARK}`,
+    });
+    assert.equal(saved.status, 401);
+    const env = await deliver(hook.base, "/classify", envelope("classify"), {
+      ...opts,
+      secret: HOOK_SECRET,
+    });
+    assert.equal(env.status, 200);
+  } finally {
+    await hook.stop();
+  }
+  assertClean(hook.output());
+});
+
+test("--forget removes the saved secret and keeps the rest of the state file", async () => {
+  const stateFile = stateWith({ hookSecret: HOOK_SECRET, other: "kept" });
+  const hook = await run({ VIEW_TOKEN, RAVN_STATE_FILE: stateFile }, ["--forget"]);
+  try {
+    const res = await deliver(hook.base, "/classify", envelope("classify"), {
+      stage: "classify",
+      secret: HOOK_SECRET,
+    });
+    assert.equal(res.status, 503);
+  } finally {
+    await hook.stop();
+  }
+  assert.deepEqual(JSON.parse(readFileSync(stateFile, "utf8")), { other: "kept" });
+  assert.match(hook.output(), /forgot the signing secret/);
+  assertClean(hook.output());
+});
+
+/**
+ * On a real terminal: util-linux `script` gives the CLI a pseudo-terminal, so
+ * this is what a person sees, echo and all. Linux only (CI and the devcontainer).
+ */
+const SCRIPT = "/usr/bin/script";
+test("on a terminal it asks for the token and then the secret, which takes effect without a restart", {
+  skip: process.platform !== "linux" || !existsSync(SCRIPT) ? "needs util-linux script" : false,
+}, async () => {
+  const stateFile = join(mkdtempSync(join(tmpdir(), "echo-pty-")), "state.json");
+  const port = await freePort();
+  const base = `http://127.0.0.1:${port}`;
+  const child = spawn(
+    SCRIPT,
+    ["-qfec", `${process.execPath} ${BIN} --no-fetch-schema`, "/dev/null"],
+    {
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOST: "127.0.0.1",
+        PORT: String(port),
+        VIEW_TOKEN,
+        RAVN_STATE_FILE: stateFile,
+        RAVN_URL: ravn.base,
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+  let out = "";
+  child.stdout?.on("data", (b) => {
+    out += b;
+  });
+  child.stderr?.on("data", (b) => {
+    out += b;
+  });
+  const exited = new Promise<void>((r) => child.once("exit", () => r()));
+  try {
+    await until(() => out.includes(TOKEN_QUESTION));
+    const unwrap = ravn.newUnwrapToken();
+    child.stdin?.write(`${unwrap}\r`);
+    await until(() => out.includes(secretQuestion(`${base}/`)));
+    assert.match(out, /service account on .*: ok/);
+
+    const body = envelope("classify");
+    const opts = { stage: "classify" as const, secret: HOOK_SECRET };
+    assert.equal((await deliver(base, "/classify", body, opts)).status, 503);
+
+    child.stdin?.write("has a space\r");
+    await until(() => out.includes("whitespace"));
+    child.stdin?.write(`${HOOK_SECRET}\r`);
+    await until(() => out.includes("ready: deliveries are verified with the signing secret"));
+    assert.equal((await deliver(base, "/classify", body, opts)).status, 200);
+
+    assert.equal(statSync(stateFile).mode & 0o777, 0o600);
+    const state = JSON.parse(readFileSync(stateFile, "utf8"));
+    assert.equal(state.hookSecret, HOOK_SECRET);
+    assert.equal(typeof state.refreshToken, "string", "the chain sits beside it");
+  } finally {
+    child.stdin?.write("\u0003");
+    const timer = setTimeout(() => child.kill("SIGKILL"), 5_000);
+    await exited;
+    clearTimeout(timer);
+  }
+  assertClean(out);
 });

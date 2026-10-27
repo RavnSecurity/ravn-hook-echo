@@ -23,6 +23,10 @@ export const MAX_BODY_BYTES = 1024 * 1024;
 export const NOT_CONFIGURED =
   "not configured: RAVN_HOOK_SECRET is not set, so this hook cannot verify deliveries";
 
+/**
+ * `secret` and `ravn` are read on every request, so setting either on the
+ * object passed in (as the start-up prompt does) takes effect at once.
+ */
 export interface ServerDeps {
   /** Null: not configured. Every delivery is refused with 503, and nothing about it is stored. */
   secret: string | null;
