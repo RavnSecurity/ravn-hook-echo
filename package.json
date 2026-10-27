@@ -1,6 +1,6 @@
 {
   "name": "ravn-hook-echo",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A reference Ravn Hook for every triage stage: verifies what Ravn sends, validates it against the public stage contract, echoes a documented answer, and misbehaves on request.",
   "license": "Apache-2.0",
   "repository": {
