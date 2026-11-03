@@ -170,6 +170,25 @@ describe("signed mode: a line per delivery and answer, and /metrics", () => {
     assert.equal((await scrape(h.base, { "x-forwarded-for": "203.0.113.9" })).status, 404);
   });
 
+  test("a clear writes one view.cleared line with the count, and /metrics counts it", async () => {
+    const held = h.store.list().length;
+    assert.ok(held > 0);
+    const from = c.lines.length;
+    const res = await fetch(`${h.base}/api/deliveries`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    assert.equal(res.status, 204);
+    const got = c.lines.slice(from).map((l) => JSON.parse(l) as Record<string, unknown>);
+    assert.equal(got.length, 1);
+    assert.deepEqual(
+      { event: got[0]?.event, hookMode: got[0]?.hookMode, dropped: got[0]?.dropped },
+      { event: "view.cleared", hookMode: "signed", dropped: held },
+    );
+    assert.deepEqual(Object.keys(got[0] ?? {}).sort(), ["at", "dropped", "event", "hookMode"]);
+    assert.match((await scrape(h.base)).text, /^echo_view_cleared_total\{mode="signed"\} 1$/m);
+  });
+
   test("stdout carries no value, token or secret", async () => {
     assert.ok(c.lines.length > 0);
     assertClean(c.lines.join(""), [...fake.access]);
@@ -186,10 +205,10 @@ describe("open mode: a line per delivery and answer, and /metrics", () => {
   const key = "view-key-SECRETMARK9c1e-abcdefghijklmnop";
   const viewHash = hashViewKey(key);
   const tokens: string[] = [];
+  const store = new OpenStore();
   before(async () => {
     fake = new FakeRavn();
     await fake.start();
-    const store = new OpenStore();
     answerer = new OpenAnswerer({
       answersUrl: ravnUrls(fake.base).answers,
       stages: new Set(HOOKABLE),
@@ -273,6 +292,35 @@ describe("open mode: a line per delivery and answer, and /metrics", () => {
     assert.match(m.text, /^echo_deliveries_total\{stage="assess",outcome="unauthorized"\} 1$/m);
     assert.match(m.text, /^echo_answers_total\{stage="route",code="unauthorized"\} 1$/m);
     assert.match(m.text, /^echo_answers_total\{stage="route",code="accepted"\} 1$/m);
+  });
+
+  test("a clear writes one view.cleared line with the count, never the key or its hash", async () => {
+    const del = (k: string) =>
+      fetch(`${base}/api/deliveries`, {
+        method: "DELETE",
+        headers: { authorization: `Bearer ${k}` },
+      });
+    const held = store.list(viewHash).length;
+    assert.ok(held > 0);
+    const from = c.lines.length;
+    assert.equal((await del(key)).status, 204);
+    assert.equal((await del("view-key-SECRETMARK-never-used")).status, 204);
+    const fresh = c.lines.slice(from);
+    const got = fresh.map((l) => JSON.parse(l) as Record<string, unknown>);
+    assert.equal(got.length, 2);
+    assert.deepEqual(
+      got.map((e) => [e.event, e.hookMode, e.dropped]),
+      [
+        ["view.cleared", "open", held],
+        ["view.cleared", "open", 0],
+      ],
+    );
+    for (const e of got) {
+      assert.deepEqual(Object.keys(e).sort(), ["at", "dropped", "event", "hookMode"]);
+    }
+    assertClean(fresh.join(""), [key, viewHash, "view-key-SECRETMARK-never-used", "hk-1"]);
+    assert.equal(store.list(viewHash).length, 0);
+    assert.match((await scrape(base)).text, /^echo_view_cleared_total\{mode="open"\} 2$/m);
   });
 
   test("stdout carries no value, answer token, view key or view hash", async () => {

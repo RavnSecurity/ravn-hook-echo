@@ -607,8 +607,8 @@ the viewer's headers.
 | signed (default) | `VIEW_TOKEN` | every delivery in memory | `204`. A bad or missing token: `401` with `www-authenticate: Bearer` |
 | open (`ECHO_MODE=open`) | a view key | only the deliveries stored under `sha256(key)` | `204`, whether or not anything was stored, so a wrong key and an empty one get the same answer. A missing key, or one over 512 characters: `401` |
 
-It logs one line with a count, such as `viewer: cleared 3 deliveries`, and never
-the key or the token. Any method other than `GET`, `HEAD` or `DELETE` on the path
+It logs one [`view.cleared`](#logs-and-metrics) line with a count, and never
+the key, its hash or the token. Any method other than `GET`, `HEAD` or `DELETE` on the path
 is a `405`. What was cleared can't be brought back.
 
 ## Configuration
@@ -659,11 +659,12 @@ effect at once.
 ### Logs and metrics
 
 After the start-up banner, the hook prints one JSON line to stdout per
-delivery and per answer, for a log store such as Loki:
+delivery, per answer and per clear, for a log store such as Loki:
 
 ```json
 {"at":"…","event":"delivery.received","stage":"assess","outcome":"ok","status":200,"hookMode":"open","mode":"ok","deliveryId":"dlv_…","attempt":1,"token":true,"schemaOk":true}
 {"at":"…","event":"answer.sent","stage":"assess","hookMode":"open","stageRunId":"run_…","attempt":1,"status":200,"code":"accepted","latencyMs":84}
+{"at":"…","event":"view.cleared","hookMode":"open","dropped":3}
 ```
 
 - `delivery.received`: every POST to a hook URL, refusals included. `outcome`
@@ -674,9 +675,12 @@ delivery and per answer, for a log store such as Loki:
   were (`token`).
 - `answer.sent`: every answer posted to Ravn, with Ravn's code, or `network` /
   `no-token` when nothing came back.
+- `view.cleared`: every [clear](#clearing-deliveries) that got a `204`, with how many
+  deliveries it dropped (`0` for a key that held none). Never the key, its hash
+  or which hooks held them.
 
-`GET /metrics` serves Prometheus counters: `echo_deliveries_total{stage,outcome}`
-and `echo_answers_total{stage,code}`. It answers `404` to anything that came
+`GET /metrics` serves Prometheus counters: `echo_deliveries_total{stage,outcome}`,
+`echo_answers_total{stage,code}` and `echo_view_cleared_total{mode}`. It answers `404` to anything that came
 through a proxy (any `x-forwarded-for`), so it is not public behind the ingress
 or a tunnel; Prometheus scrapes the pod directly.
 

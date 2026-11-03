@@ -107,6 +107,10 @@ export class Ops {
     "echo_answers_total",
     "Answers sent to Ravn, by stage and Ravn's code.",
   );
+  readonly clears = new Counter(
+    "echo_view_cleared_total",
+    "Clears from the viewer's DELETE /api/deliveries, by hook mode.",
+  );
 
   constructor(opts: { write?: (line: string) => void; now?: () => number } = {}) {
     this.write = opts.write ?? ((line) => process.stdout.write(line));
@@ -144,9 +148,18 @@ export class Ops {
     });
   }
 
+  /**
+   * The viewer's clear route dropped `dropped` entries. A count only: never
+   * the view key, its hash, the view token, or which hooks held them.
+   */
+  cleared(e: { hookMode: "signed" | "open"; dropped: number }): void {
+    this.clears.inc({ mode: e.hookMode });
+    this.line("view.cleared", { hookMode: e.hookMode, dropped: e.dropped });
+  }
+
   /** The Prometheus text exposition. */
   metrics(): string {
-    return this.deliveries.render() + this.answers.render();
+    return this.deliveries.render() + this.answers.render() + this.clears.render();
   }
 
   private line(event: string, fields: Record<string, unknown>): void {
