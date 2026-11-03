@@ -116,6 +116,15 @@ test("ECHO_MODE=open: boots with nothing set, answers with Ravn's token, and log
     const bare = await deliver(hook.base, "/assess", envelope("assess"), { stage: "assess" });
     assert.equal(bare.status, 401);
 
+    // Clearing with a view key logs a count, never the key.
+    const viewKey = `view-key-${SECRET_MARK}`;
+    const cleared = await fetch(`${hook.base}/api/deliveries`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${viewKey}` },
+    });
+    assert.equal(cleared.status, 204);
+    await until(() => /viewer: cleared 0 deliveries/.test(hook.output()));
+
     assert.match(hook.output(), /open mode: answers with Ravn-Answer-Token/);
     assert.match(hook.output(), /\/view#k=<the key in Ravn's/);
     assert.equal(hook.output().includes(token), false, "the answer token is never logged");
@@ -143,6 +152,14 @@ test("unconfigured, it boots, serves /healthz, refuses deliveries with 503, and 
     assert.match(hook.output(), /no service account: answers and reads off/);
     assert.equal(hook.output().includes(TOKEN_QUESTION), false, "no terminal: no prompt");
     assert.doesNotMatch(hook.output(), /paste its signing secret/);
+
+    // Clearing with VIEW_TOKEN logs a count, never the token.
+    const cleared = await fetch(`${hook.base}/api/deliveries`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${VIEW_TOKEN}` },
+    });
+    assert.equal(cleared.status, 204);
+    await until(() => /viewer: cleared 0 deliveries/.test(hook.output()));
   } finally {
     await hook.stop();
   }

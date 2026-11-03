@@ -64,6 +64,8 @@ export interface ServerDeps {
   open?: OpenDeps;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  /** One line per clear, a count only. Defaults to stdout. */
+  log?: (line: string) => void;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -86,6 +88,16 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
   const url = new URL(req.url ?? "/", "http://hook.invalid");
   const path = url.pathname;
   const method = req.method ?? "GET";
+
+  if (path === "/api/deliveries" || path === "/view/api/deliveries") {
+    if (method === "DELETE") {
+      return deps.open ? openClear(req, res, deps, deps.open) : clear(req, res, deps);
+    }
+    if (method !== "GET" && method !== "HEAD") {
+      res.setHeader("allow", "GET, HEAD, DELETE");
+      return send(res, 405, { error: "the viewer API takes GET or DELETE" });
+    }
+  }
 
   if (method === "GET" || method === "HEAD") {
     switch (path) {
@@ -213,6 +225,51 @@ function openDeliveries(
       deliveries: list,
     }),
   );
+}
+
+function cleared(deps: ServerDeps, n: number): void {
+  // A count only: never the key, the token or its hash.
+  const log = deps.log ?? ((line: string) => console.log(line));
+  log(`viewer: cleared ${n} deliver${n === 1 ? "y" : "ies"}`);
+}
+
+/** A 204 with the viewer's headers and no body. */
+function noContent(res: ServerResponse): void {
+  for (const [k, v] of Object.entries(VIEWER_HEADERS)) res.setHeader(k, v);
+  res.writeHead(204);
+  res.end();
+}
+
+/** Signed mode: the viewer token clears the whole store. The request body is never read. */
+function clear(req: IncomingMessage, res: ServerResponse, deps: ServerDeps): void {
+  if (!bearerMatches(req, deps.viewToken)) {
+    res.setHeader("www-authenticate", "Bearer");
+    viewer(res, 401, "application/json", JSON.stringify({ error: "bad or missing token" }));
+    return;
+  }
+  cleared(deps, deps.store.clear());
+  noContent(res);
+}
+
+/**
+ * Open mode: a view key clears only what is stored under its hash. Ravn sends
+ * the old key on Disconnect. 204 whether or not anything was there, so the
+ * reply says nothing about which keys hold deliveries.
+ */
+function openClear(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ServerDeps,
+  open: OpenDeps,
+): void {
+  const key = bearerOf(req);
+  if (!key || key.length > 512) {
+    res.setHeader("www-authenticate", "Bearer");
+    viewer(res, 401, "application/json", JSON.stringify({ error: "bad or missing key" }));
+    return;
+  }
+  cleared(deps, open.store.clear(hashViewKey(key)));
+  noContent(res);
 }
 
 async function readBody(req: IncomingMessage): Promise<Buffer | "too-large"> {

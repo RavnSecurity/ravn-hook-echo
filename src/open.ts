@@ -119,6 +119,22 @@ export class OpenStore {
     return out.sort((a, b) => b.seq - a.seq);
   }
 
+  /**
+   * Drops every entry stored under this view hash, and says how many. Ravn
+   * calls this through `DELETE /api/deliveries` when a hook is disconnected,
+   * so the old link stops showing what it held.
+   */
+  clear(viewHash: string): number {
+    let dropped = 0;
+    for (const [hook, list] of this.byHook) {
+      const kept = list.filter((r) => r.viewHash !== viewHash);
+      dropped += list.length - kept.length;
+      if (kept.length === 0) this.byHook.delete(hook);
+      else if (kept.length !== list.length) this.byHook.set(hook, kept);
+    }
+    return dropped;
+  }
+
   /** Every entry, for tests. */
   all(now = Date.now()): OpenRecord[] {
     this.sweep(now);
