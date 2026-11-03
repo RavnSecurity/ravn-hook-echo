@@ -34,6 +34,7 @@ export const VIEW_HTML = `<!doctype html>
 <header>
   <h1>ravn-hook-echo</h1>
   <p id="status">Loading…</p>
+  <p><button id="clear" type="button" hidden>Clear</button></p>
 </header>
 <main>
   <section id="meta" hidden></section>
@@ -67,6 +68,8 @@ details.d > summary code { font-family: var(--mono); font-size: 12px; }
 pre { font-family: var(--mono); font-size: 12px; line-height: 1.45; margin: 0; padding: 10px; border-radius: 6px; background: rgba(127,127,127,.08); overflow: auto; white-space: pre-wrap; word-break: break-word; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 0; font-size: 13px; }
 dt { color: var(--muted); } dd { margin: 0; font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+#clear { font: inherit; font-size: 13px; padding: 3px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--bad); cursor: pointer; }
+#clear:disabled { opacity: .5; cursor: default; }
 ul.fail { margin: 0; padding-left: 18px; font-family: var(--mono); font-size: 12px; }
 @media (max-width: 720px) { details.d > summary { grid-template-columns: 1fr 1fr; } }
 `;
@@ -77,6 +80,7 @@ export const VIEW_JS = `(function () {
   var metaEl = document.getElementById("meta");
   var listEl = document.getElementById("list");
   var emptyEl = document.getElementById("empty");
+  var clearEl = document.getElementById("clear");
 
   function token() {
     var h = location.hash.replace(/^#/, "");
@@ -249,9 +253,28 @@ export const VIEW_JS = `(function () {
       .then(function (data) {
         statusEl.textContent = data.deliveries.length + " deliver" + (data.deliveries.length === 1 ? "y" : "ies") + " in the last " + data.retentionHours + "h";
         render(data);
+        clearEl.hidden = false;
       })
       .catch(function (e) { statusEl.textContent = e.message; });
   }
+  function clear() {
+    var k = token();
+    if (!k) return;
+    if (!window.confirm("Clear this link's deliveries? They can't be brought back.")) return;
+    clearEl.disabled = true;
+    fetch("api/deliveries", { method: "DELETE", headers: { authorization: "Bearer " + k }, cache: "no-store" })
+      .then(function (r) {
+        if (r.status === 401) throw new Error("That token is not this hook's. Nothing was cleared.");
+        if (r.status === 429) throw new Error("Too many requests. Nothing was cleared; try again in a few seconds.");
+        if (r.status !== 204) throw new Error("The hook answered " + r.status + ". Nothing was cleared.");
+        listEl.textContent = "";
+        emptyEl.hidden = false;
+        statusEl.textContent = "Cleared. 0 deliveries.";
+      })
+      .catch(function (e) { statusEl.textContent = e.message; })
+      .then(function () { clearEl.disabled = false; });
+  }
+  clearEl.addEventListener("click", clear);
   load();
   setInterval(load, 5000);
   window.addEventListener("hashchange", load);

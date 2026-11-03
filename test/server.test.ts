@@ -186,6 +186,41 @@ describe("viewer API", () => {
     assert.equal(ok.status, 200);
   });
 
+  test("DELETE with a wrong or missing token is a 401, and the store is unchanged", async () => {
+    await deliver(h.base, "/assess", envelope("assess"), { stage: "assess", deliveryId: "d-keep" });
+    const before = h.store.list().length;
+    assert.ok(before > 0);
+    for (const headers of [
+      {},
+      { authorization: "Bearer nope" },
+      { authorization: `Bearer ${TOKEN}x` },
+    ]) {
+      const res = await fetch(`${h.base}/api/deliveries`, { method: "DELETE", headers });
+      assert.equal(res.status, 401);
+      assert.equal(res.headers.get("www-authenticate"), "Bearer");
+    }
+    assert.equal(h.store.list().length, before);
+  });
+
+  test("DELETE with the token empties the store", async () => {
+    await deliver(h.base, "/route", envelope("route"), { stage: "route", deliveryId: "d-gone" });
+    const from = h.lines.length;
+    const res = await fetch(`${h.base}/view/api/deliveries`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    assert.equal(res.status, 204);
+    assert.equal(res.headers.get("cache-control"), "no-store", "the viewer's headers");
+    assert.equal(h.store.list().length, 0);
+    const logged = h.lines.slice(from).join("\n");
+    assert.match(logged, /^viewer: cleared \d+ deliver(y|ies)$/);
+    assert.ok(!logged.includes(TOKEN), "the token is never logged");
+    const after = await fetch(`${h.base}/api/deliveries`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    assert.deepEqual(((await after.json()) as { deliveries: unknown[] }).deliveries, []);
+  });
+
   test("shows what the issue lists for each delivery", async () => {
     await deliver(h.base, "/classify", envelope("classify"), {
       stage: "classify",
