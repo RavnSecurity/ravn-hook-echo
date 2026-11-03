@@ -17,11 +17,14 @@ interface OpenHook {
   base: string;
   store: OpenStore;
   answerer: OpenAnswerer;
+  /** What the server logged. */
+  lines: string[];
   close: () => Promise<void>;
 }
 
 async function openHook(fake: FakeRavn): Promise<OpenHook> {
   const store = new OpenStore();
+  const lines: string[] = [];
   const answerer = new OpenAnswerer({
     answersUrl: ravnUrls(fake.base).answers,
     stages: new Set(HOOKABLE),
@@ -40,6 +43,7 @@ async function openHook(fake: FakeRavn): Promise<OpenHook> {
     schemaId: SCHEMA_ID,
     open: { answerer, store },
     sleep: async () => {},
+    log: (line) => lines.push(line),
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const { port } = server.address() as AddressInfo;
@@ -47,6 +51,7 @@ async function openHook(fake: FakeRavn): Promise<OpenHook> {
     base: `http://127.0.0.1:${port}`,
     store,
     answerer,
+    lines,
     close: () => new Promise<void>((r) => server.close(() => r())),
   };
 }
@@ -269,6 +274,83 @@ describe("open mode (ECHO_MODE=open)", () => {
     assert.equal(fake.answers.length, before);
   });
 
+  describe("DELETE /api/deliveries", () => {
+    async function keep(hookId: string, key: string): Promise<void> {
+      const p = packet("assess", hookId);
+      await post(x.base, "/assess", p, {
+        token: fake.newAnswerToken(p.stageRunId),
+        view: hashViewKey(key),
+        stage: "assess",
+      });
+      await x.answerer.idle();
+    }
+    const del = (key: string | null, path = "/api/deliveries") =>
+      fetch(`${x.base}${path}`, {
+        method: "DELETE",
+        headers: key ? { authorization: `Bearer ${key}` } : {},
+      });
+    const count = async (key: string) =>
+      ((await view(x.base, key)).json.deliveries as unknown[]).length;
+
+    test("clearing with key A leaves key B's entries alone", async () => {
+      const keyA = newViewKey();
+      const keyB = newViewKey();
+      await keep("hook-clear-a", keyA);
+      await keep("hook-clear-a", keyA);
+      await keep("hook-clear-b", keyB);
+      assert.equal(await count(keyA), 2);
+
+      const res = await del(keyA);
+      assert.equal(res.status, 204);
+      assert.equal(await res.text(), "");
+      assert.equal(res.headers.get("cache-control"), "no-store", "the viewer's headers");
+      assert.equal(res.headers.get("referrer-policy"), "no-referrer");
+      assert.equal(await count(keyA), 0);
+      assert.equal(await count(keyB), 1);
+      assert.equal((await del(keyA, "/view/api/deliveries")).status, 204, "also under /view");
+    });
+
+    test("a wrong key gets 204, and nothing changes", async () => {
+      const key = newViewKey();
+      await keep("hook-clear-wrong", key);
+      const all = x.store.all().length;
+      const res = await del(newViewKey());
+      assert.equal(res.status, 204, "the same answer as a key with something stored");
+      // The hash Ravn sends is not the key, so it clears nothing either.
+      assert.equal((await del(hashViewKey(key))).status, 204);
+      assert.equal(x.store.all().length, all);
+      assert.equal(await count(key), 1);
+    });
+
+    test("a missing or overlong key is a 401, as on GET", async () => {
+      const all = x.store.all().length;
+      for (const res of [await del(null), await del("k".repeat(513))]) {
+        assert.equal(res.status, 401);
+        assert.equal(res.headers.get("www-authenticate"), "Bearer");
+      }
+      assert.equal(x.store.all().length, all);
+    });
+
+    test("logs a count, never the key or its hash", async () => {
+      const key = newViewKey();
+      await keep("hook-clear-log", key);
+      const from = x.lines.length;
+      await del(key);
+      const logged = x.lines.slice(from).join("\n");
+      assert.equal(logged, "viewer: cleared 1 delivery");
+      assert.ok(!logged.includes(key));
+      assert.ok(!logged.includes(hashViewKey(key)));
+    });
+
+    test("any other method is a 405", async () => {
+      for (const method of ["POST", "PUT", "PATCH"]) {
+        const res = await fetch(`${x.base}/api/deliveries`, { method });
+        assert.equal(res.status, 405, method);
+        assert.equal(res.headers.get("allow"), "GET, HEAD, DELETE");
+      }
+    });
+  });
+
   test("healthz says open, and configured", async () => {
     const res = await fetch(`${x.base}/healthz`);
     assert.deepEqual(await res.json(), { ok: true, mode: "open", configured: true });
@@ -330,6 +412,18 @@ describe("OpenStore", () => {
     s.add({ ...rec("h", "new", t0 + 1), seq: s.nextSeq() }, t0 + 1);
     assert.equal(s.list("new", t0 + 2).length, 1);
     assert.equal(s.list("old", t0 + 2).length, 1);
+  });
+
+  test("clear drops one view hash's entries, across hooks, and says how many", () => {
+    const s = new OpenStore();
+    const t0 = Date.UTC(2026, 0, 1);
+    s.add({ ...rec("h1", "v", t0), seq: s.nextSeq() }, t0);
+    s.add({ ...rec("h1", "w", t0), seq: s.nextSeq() }, t0);
+    s.add({ ...rec("h2", "v", t0), seq: s.nextSeq() }, t0);
+    assert.equal(s.clear("v"), 2);
+    assert.equal(s.list("v", t0).length, 0);
+    assert.equal(s.list("w", t0).length, 1);
+    assert.equal(s.clear("nothing"), 0);
   });
 
   test("the number of hooks is capped, least recently written dropped first", () => {

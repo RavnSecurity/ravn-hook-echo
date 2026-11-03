@@ -80,6 +80,13 @@ export class DeliveryStore {
     return this.records.slice();
   }
 
+  /** Drops every delivery, and says how many there were. */
+  clear(): number {
+    const n = this.records.length;
+    this.records = [];
+    return n;
+  }
+
   sweep(now = Date.now()): void {
     const cutoff = now - this.retentionMs;
     this.records = this.records.filter((r) => Date.parse(r.receivedAt) >= cutoff);

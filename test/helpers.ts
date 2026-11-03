@@ -16,6 +16,8 @@ export interface Running {
   base: string;
   store: DeliveryStore;
   sleeps: number[];
+  /** What the server logged. */
+  lines: string[];
   close: () => Promise<void>;
 }
 
@@ -24,6 +26,7 @@ export async function start(
 ): Promise<Running> {
   const store = new DeliveryStore({ retentionHours: 24 });
   const sleeps: number[] = [];
+  const lines: string[] = [];
   const server = createHookServer({
     secret: SECRET,
     viewToken: TOKEN,
@@ -38,6 +41,7 @@ export async function start(
     sleep: async (ms) => {
       sleeps.push(ms);
     },
+    log: (line) => lines.push(line),
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
   const { port } = server.address() as AddressInfo;
@@ -45,6 +49,7 @@ export async function start(
     base: `http://127.0.0.1:${port}`,
     store,
     sleeps,
+    lines,
     close: () => new Promise<void>((r) => server.close(() => r())),
   };
 }

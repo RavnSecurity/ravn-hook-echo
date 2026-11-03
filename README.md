@@ -588,6 +588,29 @@ A test fails if any viewer response contains a value from a test packet while
 `--show-values` is off. The test packets carry canary strings, which makes the
 check a substring search.
 
+### Clearing deliveries
+
+The viewer's **Clear** button asks first, then drops what the link can see. It
+calls the same endpoint Ravn calls when an org disconnects the Ravn echo, so the
+old viewer link stops showing anything:
+
+```bash
+curl -X DELETE https://hooks.example.com/api/deliveries \
+  -H "authorization: Bearer $KEY"
+```
+
+It is also served at `/view/api/deliveries`. It reads no body, and answers with
+the viewer's headers.
+
+| Mode | Bearer | Clears | Reply |
+| --- | --- | --- | --- |
+| signed (default) | `VIEW_TOKEN` | every delivery in memory | `204`. A bad or missing token: `401` with `www-authenticate: Bearer` |
+| open (`ECHO_MODE=open`) | a view key | only the deliveries stored under `sha256(key)` | `204`, whether or not anything was stored, so a wrong key and an empty one get the same answer. A missing key, or one over 512 characters: `401` |
+
+It logs one line with a count, such as `viewer: cleared 3 deliveries`, and never
+the key or the token. Any method other than `GET`, `HEAD` or `DELETE` on the path
+is a `405`. What was cleared can't be brought back.
+
 ## Configuration
 
 | Setting | Default | |
