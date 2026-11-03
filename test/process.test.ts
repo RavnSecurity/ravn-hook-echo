@@ -118,14 +118,16 @@ test("ECHO_MODE=open: boots with nothing set, answers with Ravn's token, and log
     const bare = await deliver(hook.base, "/assess", envelope("assess"), { stage: "assess" });
     assert.equal(bare.status, 401);
 
-    // Clearing with a view key logs a count, never the key.
+    // Clearing with a view key logs a count (#33), never the key.
     const viewKey = `view-key-${SECRET_MARK}`;
     const cleared = await fetch(`${hook.base}/api/deliveries`, {
       method: "DELETE",
       headers: { authorization: `Bearer ${viewKey}` },
     });
     assert.equal(cleared.status, 204);
-    await until(() => /viewer: cleared 0 deliveries/.test(hook.output()));
+    await until(() =>
+      /"event":"view\.cleared","hookMode":"open","dropped":0\}/.test(hook.output()),
+    );
 
     assert.match(hook.output(), /open mode: answers with Ravn-Answer-Token/);
     assert.match(hook.output(), /\/view#k=<the key in Ravn's/);
@@ -139,11 +141,12 @@ test("ECHO_MODE=open: boots with nothing set, answers with Ravn's token, and log
       .filter((l) => l.startsWith("{"))
       .map((l) => JSON.parse(l) as Record<string, unknown>);
     assert.deepEqual(
-      events.map((e) => [e.event, e.outcome ?? e.code]),
+      events.map((e) => [e.event, e.outcome ?? e.code ?? e.dropped]),
       [
         ["delivery.received", "ok"],
         ["answer.sent", "accepted"],
         ["delivery.received", "unauthorized"],
+        ["view.cleared", 0],
       ],
     );
     const metrics = await (await fetch(`${hook.base}/metrics`)).text();
@@ -180,7 +183,9 @@ test("unconfigured, it boots, serves /healthz, refuses deliveries with 503, and 
       headers: { authorization: `Bearer ${VIEW_TOKEN}` },
     });
     assert.equal(cleared.status, 204);
-    await until(() => /viewer: cleared 0 deliveries/.test(hook.output()));
+    await until(() =>
+      /"event":"view\.cleared","hookMode":"signed","dropped":0\}/.test(hook.output()),
+    );
   } finally {
     await hook.stop();
   }

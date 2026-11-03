@@ -251,8 +251,13 @@ function openDeliveries(
   );
 }
 
-function cleared(deps: ServerDeps, n: number): void {
-  // A count only: never the key, the token or its hash.
+function cleared(deps: ServerDeps, hookMode: "signed" | "open", n: number): void {
+  // A count only: never the key, the token or its hash. With Ops, the one
+  // line is the operator's JSON line; without, a line for a person.
+  if (deps.ops) {
+    deps.ops.cleared({ hookMode, dropped: n });
+    return;
+  }
   const log = deps.log ?? ((line: string) => console.log(line));
   log(`viewer: cleared ${n} deliver${n === 1 ? "y" : "ies"}`);
 }
@@ -271,7 +276,7 @@ function clear(req: IncomingMessage, res: ServerResponse, deps: ServerDeps): voi
     viewer(res, 401, "application/json", JSON.stringify({ error: "bad or missing token" }));
     return;
   }
-  cleared(deps, deps.store.clear());
+  cleared(deps, "signed", deps.store.clear());
   noContent(res);
 }
 
@@ -292,7 +297,7 @@ function openClear(
     viewer(res, 401, "application/json", JSON.stringify({ error: "bad or missing key" }));
     return;
   }
-  cleared(deps, open.store.clear(hashViewKey(key)));
+  cleared(deps, "open", open.store.clear(hashViewKey(key)));
   noContent(res);
 }
 
