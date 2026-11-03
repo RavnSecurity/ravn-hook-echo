@@ -693,11 +693,11 @@ canary packets and searches everything it printed.
 Ravn runs one instance at `https://echo-hook.ravnsecurity.io`, as `svc-hook-echo`
 on the shared service chart:
 
-- `deploy/values.yaml`: one replica and a 1 GiB volume at `/state`, which a
-  service account's refresh token chain needs.
+- `deploy/values.yaml`: one replica, no volume. The open-mode delivery store
+  is in memory, so a second pod would see a different store.
 - `deploy/values-prod.yaml`: the hosted instance runs in
   [open mode](#open-mode-the-ravn-echo), with no secret at all. It needs no
-  ExternalSecret, and the volume goes unused.
+  ExternalSecret and no volume, so a deploy rolls with no downtime.
 - `.github/workflows/deploy.yml`: on a push to `main`, `ci` then
   `ravn-actions`' deploy workflow, which builds the image to ECR and writes the
   lane record in argo-apps.
