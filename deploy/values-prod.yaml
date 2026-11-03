@@ -21,17 +21,14 @@ env:
   - {name: ANSWER_STAGES, value: "classify,route,assess,review,follow-up,knowledge"}
 
 # Rate limiting belongs to ingress-nginx, per client address, not to the hook.
-# ❗NOT turned on yet: ingress-nginx does not see the client's address today
-# (ravn-ops#265). The NLB terminates TLS with IP targets and no proxy protocol,
-# so nginx's peer is an NLB node, and `use-forwarded-headers: "true"` with the
-# default `proxy-real-ip-cidr` (0.0.0.0/0) makes it trust any X-Forwarded-For a
-# client sends. A limit here would key on the NLB node for honest clients (one
-# bucket shared by every org and Ravn itself) and on a spoofable header for
-# everyone else. Once ravn-ops#265 lands, uncomment. Sized for one Ravn sender
-# (every org's deliveries come from Ravn's egress; six stages per case, plus
-# retries) and viewer reads (one every 5 s per open tab):
-#
-# ingress:
-#   annotations:
-#     nginx.ingress.kubernetes.io/limit-rpm: "600"
-#     nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"
+# ingress-nginx gets the real client address from the NLB's PROXY protocol v2
+# and ignores a client's own X-Forwarded-For (ravn-ops#265, cut over in
+# ravn-ops#266), so this keys on the client. Sized for one Ravn sender (every
+# org's deliveries come from Ravn's egress; six stages per case, plus retries)
+# and viewer reads (one every 5 s per open tab). Over it, nginx answers 503 and
+# Ravn retries the delivery, so nothing is lost. Merges with `ingress` in
+# values.yaml.
+ingress:
+  annotations:
+    nginx.ingress.kubernetes.io/limit-rpm: "600"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"

@@ -335,11 +335,14 @@ own hook uses the signing secret and a service account, as above.
   only entries whose `Ravn-Echo-View` matches come back. A wrong key gets an
   empty list, the same as a key with nothing yet. Disconnecting in Ravn changes
   the key, so the old link shows nothing new.
-- **Rate limiting is the ingress's job**, per client address, not the hook's
-  (`nginx.ingress.kubernetes.io/limit-rpm` in `deploy/values-prod.yaml`). It is
-  off in prod until ingress-nginx can see the client's address through the NLB
-  ([ravn-ops#265](https://github.com/RavnSecurity/ravn-ops/issues/265));
-  before that, a per-address limit would be one bucket for everyone.
+- **Rate-limited per client IP at the ingress**, not in the hook:
+  `nginx.ingress.kubernetes.io/limit-rpm: "600"` with
+  `limit-burst-multiplier: "5"` in `deploy/values-prod.yaml`. ingress-nginx
+  gets the real client address from the NLB's PROXY protocol and ignores a
+  client's own `X-Forwarded-For`
+  ([ravn-ops#265](https://github.com/RavnSecurity/ravn-ops/issues/265)). Over
+  the limit, nginx answers `503`; Ravn retries a delivery, so nothing is lost.
+  Run anywhere else, the hook has no limit of its own.
 
 ## What it does with each delivery
 
