@@ -1,8 +1,10 @@
 import { ServiceAccount } from "./account.js";
 import { Ravn, ravnUrls } from "./answers.js";
-import { ConfigError, parseConfig, USAGE } from "./config.js";
+import { type Config, ConfigError, type OpenConfig, parseConfig, USAGE } from "./config.js";
 import { McpReader } from "./mcp.js";
+import { OpenAnswerer, OpenStore } from "./open.js";
 import { interactive, promptSetup, whatToAsk } from "./prompt.js";
+import { RateLimiter } from "./ratelimit.js";
 import { fetchPublishedSchema, loadVendoredSchema, SCHEMA_ID, StageSchema } from "./schema.js";
 import { createHookServer, type ServerDeps } from "./server.js";
 import { HOOKABLE } from "./stages.js";
@@ -48,6 +50,11 @@ async function main(): Promise<void> {
 
   const store = new DeliveryStore({ retentionHours: cfg.retentionHours });
   setInterval(() => store.sweep(), 60_000).unref();
+
+  if (cfg.open) {
+    await runOpen(cfg, cfg.open, store, () => schema);
+    return;
+  }
 
   if (cfg.forget && savedHookSecret(cfg.stateFile) !== null) {
     saveHookSecret(cfg.stateFile, undefined);
@@ -193,6 +200,75 @@ async function main(): Promise<void> {
     },
   });
   if (outcome === "interrupted") stop();
+}
+
+/**
+ * `ECHO_MODE=open`: the one Ravn-run echo. No secret, no service account, no
+ * prompt; nothing here is any org's. See src/open.ts.
+ */
+async function runOpen(
+  cfg: Config,
+  open: OpenConfig,
+  store: DeliveryStore,
+  schema: () => StageSchema,
+): Promise<void> {
+  const openStore = new OpenStore({ retentionHours: cfg.retentionHours });
+  setInterval(() => openStore.sweep(), 60_000).unref();
+  const answerer = new OpenAnswerer({
+    answersUrl: ravnUrls(cfg.ravnUrl).answers,
+    stages: new Set(cfg.answerStages),
+    schema,
+    store: openStore,
+  });
+  const limits = {
+    ip: new RateLimiter({ limit: open.ratePerIp }),
+    hook: new RateLimiter({ limit: open.ratePerHook }),
+    view: new RateLimiter({ limit: open.rateViewPerIp }),
+  };
+  setInterval(() => {
+    for (const l of Object.values(limits)) l.sweep();
+  }, 60_000).unref();
+  const server = createHookServer({
+    secret: null,
+    viewToken: "",
+    showValues: cfg.showValues,
+    retentionHours: cfg.retentionHours,
+    version: VERSION,
+    store,
+    schema,
+    schemaId: SCHEMA_ID,
+    open: { answerer, store: openStore, limits, trustedHops: open.trustedProxyHops },
+  });
+
+  let up: Awaited<ReturnType<typeof listenPublic>> | undefined;
+  const stop = () => (up ? void up.close().then(() => process.exit(0)) : process.exit(0));
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+  if (cfg.tunnel) console.log(`tunnel: opening (${cfg.tunnel.provider})`);
+  try {
+    up = await listenPublic(server, cfg);
+  } catch (e) {
+    if (e instanceof TunnelError) {
+      console.error(`ravn-hook-echo: the tunnel did not open: ${e.message}`);
+      process.exit(1);
+    }
+    throw e;
+  }
+  const base = up.base;
+  console.log(`ravn-hook-echo ${VERSION} listening on ${cfg.host}:${cfg.port}`);
+  if (cfg.tunnel) console.log(`tunnel: ${cfg.tunnel.provider}, public at ${base}`);
+  console.log(`schema: ${schema().source.kind} (${SCHEMA_ID})`);
+  console.log(
+    `open mode: answers with Ravn-Answer-Token to ${cfg.ravnUrl}; ` +
+      `keeps only what Ravn accepts, the last ${openStore.perHook} per hook for ${cfg.retentionHours}h, in memory`,
+  );
+  console.log(`  answers ${cfg.answerStages.length ? cfg.answerStages.join(", ") : "none"}`);
+  console.log(
+    `  rate limits per minute: ${open.ratePerIp} per address, ${open.ratePerHook} per hook, ` +
+      `${open.rateViewPerIp} viewer reads per address`,
+  );
+  console.log(`hook URL: ${base}/  (or ${base}/<stage>)`);
+  console.log(`viewer: ${base}/view#k=<the key in Ravn's "Open in echo's viewer" link>`);
 }
 
 await main();

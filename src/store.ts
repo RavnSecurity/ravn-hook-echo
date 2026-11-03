@@ -21,7 +21,8 @@ export interface DeliveryRecord {
   seen: number;
   /** True when the same `x-ravn-delivery` was already received: a retry. */
   duplicate: boolean;
-  signatureValid: true;
+  /** True: the signature verified. Null: open mode, where there is none, and Ravn vouches by accepting the answer. */
+  signatureValid: true | null;
   /** Null when the body did not parse. */
   schemaValid: boolean | null;
   schemaFailures: SchemaFailure[];

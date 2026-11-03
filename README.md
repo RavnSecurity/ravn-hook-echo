@@ -13,6 +13,7 @@ Anything it can do, your own hook can do too.
 - [Run it](#run-it)
 - [Point a program at it](#point-a-program-at-it)
 - [Run it as a service account](#run-it-as-a-service-account)
+- [Open mode: the Ravn echo](#open-mode-the-ravn-echo)
 - [What it does with each delivery](#what-it-does-with-each-delivery)
 - [Modes: misbehaving on request](#modes-misbehaving-on-request)
 - [What the echo answers](#what-the-echo-answers)
@@ -300,6 +301,47 @@ The viewer shows each answer's code, such as `3-packets`, `not-observed` or
 `RAVN_URL` points the hook at a Ravn other than `https://apps.ravnsecurity.io`.
 The paths under it stay the same.
 
+## Open mode: the Ravn echo
+
+`ECHO_MODE=open` is how Ravn runs the one hosted echo at
+`https://echo-hook.ravnsecurity.io` for every org at once
+([ravn-platform#821](https://github.com/RavnSecurity/ravn-platform/issues/821)).
+An org admin clicks **Use Ravn echo** in Settings → Hooks, and nobody handles a
+secret or a service account. It isn't something you run for your own hook: your
+own hook uses the signing secret and a service account, as above.
+
+- **No signature check, no service account, no MCP reads.** It refuses to start
+  with `RAVN_HOOK_SECRET`, `RAVN_UNWRAP_TOKEN`, `RAVN_ACCESS_TOKEN_ONLY` or
+  `VIEW_TOKEN` set, since any of them would be one org's credential on a hook
+  every org uses.
+- **Every delivery must carry two headers**, which Ravn sends only to its own
+  echo hook. Without them it is refused with `401` and nothing is answered:
+
+  | Header | Value |
+  | --- | --- |
+  | `Ravn-Answer-Token` | An opaque token Ravn minted for this stage run |
+  | `Ravn-Echo-View` | `sha256` hex of the hook's view key |
+
+- **It answers with the token**, on the same answer route, with
+  `Authorization: RavnAnswer <token>` in place of a service account's bearer
+  token. Only Ravn can tell whether a token is genuine.
+- **It keeps a delivery only once Ravn accepts the answer** (`2xx`). That is
+  how it knows the post came from Ravn. A forged post gets an answer Ravn
+  refuses, and nothing is stored, not even that it was seen. What is kept is in
+  memory only: the last 50 per hook, for 24 hours at most, with the packet's
+  shape and never its values. `never` mode answers nothing, so it keeps nothing.
+- **The viewer takes the key, not a token.** Ravn's *Open in echo's viewer*
+  link is `/view#k=<view key>`. The page sends the key, the hook hashes it, and
+  only entries whose `Ravn-Echo-View` matches come back. A wrong key gets an
+  empty list, the same as a key with nothing yet. Disconnecting in Ravn changes
+  the key, so the old link shows nothing new.
+- **Rate limits**, per minute: deliveries per source address
+  (`RATE_PER_IP`, default 300) and per hook, by the packet's `impl.hookId`
+  (`RATE_PER_HOOK`, default 60), and viewer reads per source address
+  (`RATE_VIEW_PER_IP`, default 120). Past one, `429` with `Retry-After`. Ravn
+  retries a delivery, so nothing is lost. Behind proxies that append to
+  `X-Forwarded-For`, set `TRUSTED_PROXY_HOPS` to how many.
+
 ## What it does with each delivery
 
 In order:
@@ -565,8 +607,11 @@ check a substring search.
 | `RAVN_STATE_FILE` | `~/.ravn-hook-echo/state.json` | Where the refresh token, and a signing secret typed at the prompt, are kept, mode 600 |
 | `ANSWER_STAGES` | all six | The stages to answer, comma-separated, or `none` |
 | `RAVN_URL` | `https://apps.ravnsecurity.io` | Where Ravn is |
+| `ECHO_MODE` | `signed` | `open` for the [Ravn echo](#open-mode-the-ravn-echo) |
+| `RATE_PER_IP`, `RATE_PER_HOOK`, `RATE_VIEW_PER_IP` | `300`, `60`, `120` | Open mode's limits, per minute |
+| `TRUSTED_PROXY_HOPS` | `0` | Open mode: proxies in front that append to `X-Forwarded-For` |
 
-Other endpoints: `GET /healthz` answers `{ "ok": true, "configured": true }`, and
+Other endpoints: `GET /healthz` answers `{ "ok": true, "mode": "signed", "configured": true }`, and
 `200` even when unconfigured, so a pod waiting for its secret stays up.
 
 ### Unconfigured
@@ -600,11 +645,11 @@ marked credentials and canary packets and searches everything it printed.
 Ravn runs one instance at `https://echo-hook.ravnsecurity.io`, as `svc-hook-echo`
 on the shared service chart:
 
-- `deploy/values.yaml`, `deploy/values-prod.yaml`: one replica, a 1 GiB volume
-  at `/state` for the refresh token chain, and the secret
-  `ravn/prod/svc-hook-echo/hook` (`RAVN_HOOK_SECRET`, `RAVN_UNWRAP_TOKEN`,
-  `VIEW_TOKEN`) through an ExternalSecret, mounted optional so the pod boots
-  before it exists. Env is read at start: restart the pod after writing it.
+- `deploy/values.yaml`: one replica and a 1 GiB volume at `/state`, which a
+  service account's refresh token chain needs.
+- `deploy/values-prod.yaml`: the hosted instance runs in
+  [open mode](#open-mode-the-ravn-echo), with no secret at all. It needs no
+  ExternalSecret, and the volume goes unused.
 - `.github/workflows/deploy.yml`: on a push to `main`, `ci` then
   `ravn-actions`' deploy workflow, which builds the image to ECR and writes the
   lane record in argo-apps.

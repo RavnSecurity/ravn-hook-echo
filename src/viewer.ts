@@ -96,14 +96,21 @@ export const VIEW_JS = `(function () {
   function render(data) {
     metaEl.hidden = false;
     metaEl.textContent = "";
-    if (data.configured === false) {
+    var openMode = data.mode === "open";
+    if (openMode) {
+      metaEl.appendChild(el("span", null, "Ravn echo: only deliveries Ravn accepted an answer for, for this link's hook"));
+      metaEl.appendChild(el("span", null, "the last " + data.perHook + " per hook, in memory"));
+      emptyEl.firstChild.textContent = "Nothing for this link yet. A delivery shows here once Ravn accepts the echo's answer to it.";
+    } else if (data.configured === false) {
       metaEl.appendChild(el("span", "bad", "not configured: RAVN_HOOK_SECRET is not set; deliveries are refused with 503"));
     }
     metaEl.appendChild(el("span", null, "schema: " + data.schema.source + " (" + data.schema.id + ")"));
     metaEl.appendChild(el("span", null, "retention: " + data.retentionHours + "h"));
     metaEl.appendChild(el("span", null, data.showValues ? "values: shown (--show-values)" : "values: shape only"));
     var a = data.account;
-    if (a) {
+    if (openMode) {
+      metaEl.appendChild(el("span", null, "answers with Ravn's answer token: " + (data.answerStages.length ? data.answerStages.join(", ") : "none")));
+    } else if (a) {
       var acct = el("span", a.state === "ok" ? "ok" : a.state === "failing" ? "bad" : "warn",
         "service account: " + a.state + (a.code ? " (" + a.code + ")" : "") +
         (a.mode === "access-token-only" ? " · access token only, never renewed" : " · renewed " + a.renewals + "×") +
@@ -162,7 +169,7 @@ export const VIEW_JS = `(function () {
       row(dl, "attempt", d.attempt === null ? "(no x-ravn-attempt)" : d.attempt);
       row(dl, "seen", d.seen + "×" + (d.duplicate ? " (a retry of a delivery already received)" : ""));
       row(dl, "received at", d.receivedAt);
-      row(dl, "signature", "valid");
+      row(dl, "signature", d.signatureValid ? "valid" : "none (Ravn echo): Ravn vouched for it by accepting the answer");
       row(dl, "schema", d.schemaValid === true ? "valid" : d.schemaValid === false ? "invalid" : "body did not parse: " + d.parseError);
       row(dl, "inputDigest", d.inputDigest || "(none)");
       if (d.seed) row(dl, "echo seed", d.seed.kind + " " + d.seed.digest);
@@ -178,7 +185,7 @@ export const VIEW_JS = `(function () {
       }
       if (d.answer) {
         var an = d.answer;
-        body.appendChild(el("h3", null, "Answer (as the service account)"));
+        body.appendChild(el("h3", null, openMode ? "Answer (with Ravn's answer token)" : "Answer (as the service account)"));
         var adl = el("dl");
         row(adl, "plan", an.plan);
         row(adl, "state", an.state + (an.reason ? " · " + an.reason : ""));
@@ -235,6 +242,7 @@ export const VIEW_JS = `(function () {
     fetch("api/deliveries", { headers: { authorization: "Bearer " + k }, cache: "no-store" })
       .then(function (r) {
         if (r.status === 401) throw new Error("That token is not this hook's. Open the URL printed when it started.");
+        if (r.status === 429) throw new Error("Too many requests. It tries again in a few seconds.");
         if (!r.ok) throw new Error("The hook answered " + r.status + ".");
         return r.json();
       })

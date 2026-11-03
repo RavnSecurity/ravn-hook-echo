@@ -4,7 +4,28 @@ import { join } from "node:path";
 import { HOOKABLE, type HookableStage, isHookable } from "./stages.js";
 import { TUNNEL_PROVIDERS, type TunnelConfig, type TunnelProvider } from "./tunnel.js";
 
+export type EchoMode = "signed" | "open";
+
+export interface OpenConfig {
+  /** Deliveries per source address per minute. */
+  ratePerIp: number;
+  /** Deliveries per hook per minute. */
+  ratePerHook: number;
+  /** Viewer reads per source address per minute. */
+  rateViewPerIp: number;
+  /** Proxies in front that append to `x-forwarded-for`; 0 uses the socket's address. */
+  trustedProxyHops: number;
+}
+
 export interface Config {
+  /**
+   * `signed` (the default): a signing secret, and optionally a service account.
+   * `open`: the one Ravn-run echo. No secret, no service account; it answers
+   * with the token Ravn sends, and keeps only what Ravn accepted.
+   */
+  echoMode: EchoMode;
+  /** Set in open mode only. */
+  open: OpenConfig | null;
   port: number;
   host: string;
   /**
@@ -71,6 +92,20 @@ As a service account: answer every stage, and read over MCP
   ANSWER_STAGES           the stages to answer, comma-separated, or none (default: all six)
   RAVN_URL                where Ravn is (default https://apps.ravnsecurity.io)
 
+Open mode: the one Ravn-run echo, for every org, with nothing to set up
+  ECHO_MODE=open          no signature check, no service account, no MCP reads.
+                          Deliveries must carry Ravn-Answer-Token and
+                          Ravn-Echo-View; the answer is posted with the token,
+                          and a delivery is kept (in memory, the last 50 per
+                          hook, 24h) only once Ravn accepts it. The viewer
+                          shows a hook's entries to the key in its #k=.
+                          Refused with RAVN_HOOK_SECRET, RAVN_UNWRAP_TOKEN,
+                          RAVN_ACCESS_TOKEN_ONLY or VIEW_TOKEN.
+  RATE_PER_IP             deliveries per source address per minute (default 300)
+  RATE_PER_HOOK           deliveries per hook per minute (default 60)
+  RATE_VIEW_PER_IP        viewer reads per source address per minute (default 120)
+  TRUSTED_PROXY_HOPS      proxies in front that append to X-Forwarded-For (default 0)
+
 Flags
   --tunnel[=P]      open a public HTTPS address at start and print it: a
                     Cloudflare quick tunnel (the default; no account, a new
@@ -125,6 +160,36 @@ export function parseConfig(
 
   const secret = env.RAVN_HOOK_SECRET || null;
 
+  const modeRaw = (env.ECHO_MODE ?? "").trim().toLowerCase() || "signed";
+  if (modeRaw !== "signed" && modeRaw !== "open") {
+    throw new ConfigError(`ECHO_MODE: "${modeRaw}" is not one of signed, open`);
+  }
+  const echoMode: EchoMode = modeRaw;
+  let open: OpenConfig | null = null;
+  if (echoMode === "open") {
+    // ❗Open mode holds no credential of anyone's. One given to it is a
+    // mistake to stop on, not to ignore: it would be one org's, on a hook
+    // every org uses.
+    for (const name of [
+      "RAVN_HOOK_SECRET",
+      "RAVN_UNWRAP_TOKEN",
+      "RAVN_ACCESS_TOKEN_ONLY",
+      "VIEW_TOKEN",
+    ]) {
+      if (env[name]?.trim()) {
+        throw new ConfigError(
+          `ECHO_MODE=open takes no ${name}: it answers with the token Ravn sends, and its viewer takes Ravn's key`,
+        );
+      }
+    }
+    open = {
+      ratePerIp: integer(env.RATE_PER_IP ?? "300", "RATE_PER_IP", 1, 1_000_000),
+      ratePerHook: integer(env.RATE_PER_HOOK ?? "60", "RATE_PER_HOOK", 1, 1_000_000),
+      rateViewPerIp: integer(env.RATE_VIEW_PER_IP ?? "120", "RATE_VIEW_PER_IP", 1, 1_000_000),
+      trustedProxyHops: integer(env.TRUSTED_PROXY_HOPS ?? "0", "TRUSTED_PROXY_HOPS", 0, 10),
+    };
+  }
+
   const port = integer(String(flags.get("port") ?? env.PORT ?? "8080"), "PORT", 0, 65535);
   const host = String(flags.get("host") ?? env.HOST ?? "0.0.0.0");
   const showValues = flags.get("show-values") === true;
@@ -144,7 +209,13 @@ export function parseConfig(
       "set a tunnel or PUBLIC_BASE_URL, not both: the tunnel's address is the public one",
     );
   }
-  const retentionHours = integer(env.RETENTION_HOURS ?? "24", "RETENTION_HOURS", 0, 24 * 365);
+  // Open mode keeps every org's deliveries: 24 hours at most, whatever is set.
+  const retentionHours = integer(
+    env.RETENTION_HOURS ?? "24",
+    "RETENTION_HOURS",
+    0,
+    echoMode === "open" ? 24 : 24 * 365,
+  );
   const viewTokenFromEnv = Boolean(env.VIEW_TOKEN?.trim());
   const viewToken = env.VIEW_TOKEN?.trim() || randomBytes(16).toString("hex");
   const displayHost = host === "0.0.0.0" || host === "::" ? "localhost" : host;
@@ -162,6 +233,8 @@ export function parseConfig(
     throw new ConfigError(`RAVN_URL must be an http(s) URL, got "${ravnUrl}"`);
   }
   return {
+    echoMode,
+    open,
     port,
     host,
     secret,

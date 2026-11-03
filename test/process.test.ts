@@ -87,12 +87,50 @@ function assertClean(output: string): void {
   assert.equal(output.includes(CANARY), false, `a packet value was logged:\n${output}`);
 }
 
+test("ECHO_MODE=open: boots with nothing set, answers with Ravn's token, and logs neither token nor value", async () => {
+  const hook = await run({ ECHO_MODE: "open", RAVN_URL: ravn.base });
+  try {
+    assert.deepEqual(await (await fetch(`${hook.base}/healthz`)).json(), {
+      ok: true,
+      mode: "open",
+      configured: true,
+    });
+    const p = envelope("assess", { stageRunId: `${CANARY}-proc-open-run-assess` });
+    const token = ravn.newAnswerToken(p.stageRunId);
+    const before = ravn.answers.length;
+    const res = await fetch(`${hook.base}/assess`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-ravn-event": "stage.assess.requested",
+        "ravn-answer-token": token,
+        "ravn-echo-view": "a".repeat(64),
+      },
+      body: JSON.stringify(p),
+    });
+    assert.equal(res.status, 200);
+    await until(() => ravn.answers.length > before);
+    assert.equal(ravn.answers.at(-1)?.code, "accepted");
+
+    // Unsigned, and without a token: refused.
+    const bare = await deliver(hook.base, "/assess", envelope("assess"), { stage: "assess" });
+    assert.equal(bare.status, 401);
+
+    assert.match(hook.output(), /open mode: answers with Ravn-Answer-Token/);
+    assert.match(hook.output(), /\/view#k=<the key in Ravn's/);
+    assert.equal(hook.output().includes(token), false, "the answer token is never logged");
+    assertClean(hook.output());
+  } finally {
+    await hook.stop();
+  }
+});
+
 test("unconfigured, it boots, serves /healthz, refuses deliveries with 503, and the viewer says so", async () => {
   const hook = await run({ VIEW_TOKEN });
   try {
     const health = await fetch(`${hook.base}/healthz`);
     assert.equal(health.status, 200);
-    assert.deepEqual(await health.json(), { ok: true, configured: false });
+    assert.deepEqual(await health.json(), { ok: true, mode: "signed", configured: false });
 
     const res = await deliver(hook.base, "/classify", envelope("classify"), { stage: "classify" });
     assert.equal(res.status, 503);
