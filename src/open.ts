@@ -7,6 +7,7 @@ import {
   readAnswerReply,
 } from "./answers.js";
 import { answerPlan } from "./modes.js";
+import type { Ops } from "./ops.js";
 import type { StageSchema } from "./schema.js";
 import type { HookableStage } from "./stages.js";
 import type { DeliveryRecord } from "./store.js";
@@ -152,6 +153,7 @@ export class OpenAnswerer {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly pending = new Set<Promise<void>>();
+  private readonly ops: Ops | undefined;
 
   constructor(opts: {
     answersUrl: string;
@@ -161,7 +163,10 @@ export class OpenAnswerer {
     fetchImpl?: typeof fetch;
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
+    /** An `answer.sent` line and count per answer. */
+    ops?: Ops;
   }) {
+    this.ops = opts.ops;
     this.answersUrl = opts.answersUrl;
     this.stages = opts.stages;
     this.schema = opts.schema;
@@ -221,6 +226,16 @@ export class OpenAnswerer {
     }
 
     const started = this.now();
+    const sent = (status: number | null, code: string) =>
+      this.ops?.answer({
+        stage: d.stage,
+        hookMode: "open",
+        stageRunId,
+        attempt,
+        status,
+        code,
+        latencyMs: Math.max(0, this.now() - started),
+      });
     let res: Response;
     try {
       res = await this.fetchImpl(this.answersUrl, {
@@ -234,9 +249,11 @@ export class OpenAnswerer {
         signal: AbortSignal.timeout(15_000),
       });
     } catch {
+      sent(null, "network");
       return;
     }
     const reply = await readAnswerReply(res);
+    sent(reply.status, reply.code);
     if (res.status < 200 || res.status >= 300) return;
 
     const at = this.now();

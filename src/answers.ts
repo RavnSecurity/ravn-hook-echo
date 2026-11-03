@@ -1,6 +1,7 @@
 import type { AccountStatus, ServiceAccount } from "./account.js";
 import { type McpReader, READ_TOOLS, type ReadContext, type ReadRecord } from "./mcp.js";
 import { type AnswerPlan, answerPlan, type Mode } from "./modes.js";
+import type { Ops } from "./ops.js";
 import type { SchemaFailure, StageSchema } from "./schema.js";
 import type { HookableStage } from "./stages.js";
 import type { DeliveryRecord } from "./store.js";
@@ -82,6 +83,7 @@ export class Ravn {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly ops: Ops | undefined;
   /** Stage runs already handled, `<stageRunId>#<attempt>`, oldest first. */
   private readonly handled = new Set<string>();
   /** Each case's reporter, from the packet that named it, for the reads of later stages. */
@@ -97,7 +99,10 @@ export class Ravn {
     fetchImpl?: typeof fetch;
     now?: () => number;
     sleep?: (ms: number) => Promise<void>;
+    /** An `answer.sent` line and count per answer. */
+    ops?: Ops;
   }) {
+    this.ops = opts.ops;
     this.account = opts.account;
     this.reader = opts.reader;
     this.answersUrl = opts.answersUrl;
@@ -196,6 +201,15 @@ export class Ravn {
     if (reply.paths) rec.paths = reply.paths;
     if (reply.replayed) rec.replayed = true;
     rec.latencyMs = Math.max(0, this.now() - started);
+    this.ops?.answer({
+      stage: d.stage,
+      hookMode: "signed",
+      stageRunId,
+      attempt,
+      status: reply.status,
+      code: reply.code,
+      latencyMs: rec.latencyMs,
+    });
   }
 
   private async post(body: Record<string, unknown>): Promise<AnswerReply> {

@@ -3,6 +3,7 @@ import { Ravn, ravnUrls } from "./answers.js";
 import { type Config, ConfigError, parseConfig, USAGE } from "./config.js";
 import { McpReader } from "./mcp.js";
 import { OpenAnswerer, OpenStore } from "./open.js";
+import { Ops } from "./ops.js";
 import { interactive, promptSetup, whatToAsk } from "./prompt.js";
 import { fetchPublishedSchema, loadVendoredSchema, SCHEMA_ID, StageSchema } from "./schema.js";
 import { createHookServer, type ServerDeps } from "./server.js";
@@ -13,6 +14,9 @@ import { listenPublic, TunnelError } from "./tunnel.js";
 import { VERSION } from "./version.js";
 
 const SCHEMA_REFRESH_MS = 60 * 60 * 1000;
+
+/** A JSON line on stdout per delivery and answer, and the counters at /metrics. */
+const ops = new Ops();
 
 async function main(): Promise<void> {
   let config: ReturnType<typeof parseConfig>;
@@ -74,6 +78,7 @@ async function main(): Promise<void> {
     await account.start();
     account.keepFresh();
     return new Ravn({
+      ops,
       account,
       reader: new McpReader({ url: urls.mcp, caller: account, version: VERSION }),
       answersUrl: urls.answers,
@@ -105,6 +110,7 @@ async function main(): Promise<void> {
     schema: () => schema,
     schemaId: SCHEMA_ID,
     ...(ravn ? { ravn } : {}),
+    ops,
   };
   const server = createHookServer(deps);
 
@@ -217,6 +223,7 @@ async function runOpen(
     stages: new Set(cfg.answerStages),
     schema,
     store: openStore,
+    ops,
   });
   const server = createHookServer({
     secret: null,
@@ -228,6 +235,7 @@ async function runOpen(
     schema,
     schemaId: SCHEMA_ID,
     open: { answerer, store: openStore },
+    ops,
   });
 
   let up: Awaited<ReturnType<typeof listenPublic>> | undefined;

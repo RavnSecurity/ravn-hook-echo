@@ -95,7 +95,9 @@ test("ECHO_MODE=open: boots with nothing set, answers with Ravn's token, and log
       mode: "open",
       configured: true,
     });
-    const p = envelope("assess", { stageRunId: `${CANARY}-proc-open-run-assess` });
+    // Ids are logged (answer.sent names the stage run), so this one is plain;
+    // the values keep their canaries.
+    const p = envelope("assess", { stageRunId: "proc-open-run-assess" });
     const token = ravn.newAnswerToken(p.stageRunId);
     const before = ravn.answers.length;
     const res = await fetch(`${hook.base}/assess`, {
@@ -119,6 +121,25 @@ test("ECHO_MODE=open: boots with nothing set, answers with Ravn's token, and log
     assert.match(hook.output(), /open mode: answers with Ravn-Answer-Token/);
     assert.match(hook.output(), /\/view#k=<the key in Ravn's/);
     assert.equal(hook.output().includes(token), false, "the answer token is never logged");
+
+    // The operator's view (#16): a JSON line per delivery and answer, and counters.
+    await until(() => hook.output().includes('"event":"answer.sent"'));
+    const events = hook
+      .output()
+      .split("\n")
+      .filter((l) => l.startsWith("{"))
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    assert.deepEqual(
+      events.map((e) => [e.event, e.outcome ?? e.code]),
+      [
+        ["delivery.received", "ok"],
+        ["answer.sent", "accepted"],
+        ["delivery.received", "unauthorized"],
+      ],
+    );
+    const metrics = await (await fetch(`${hook.base}/metrics`)).text();
+    assert.match(metrics, /^echo_deliveries_total\{stage="assess",outcome="ok"\} 1$/m);
+    assert.match(metrics, /^echo_answers_total\{stage="assess",code="accepted"\} 1$/m);
     assertClean(hook.output());
   } finally {
     await hook.stop();
@@ -166,7 +187,8 @@ test("state survives a restart on a spent unwrap token, and nothing it logs carr
     RAVN_URL: ravn.base,
   };
   const answered = async (hook: Hook, runId: string) => {
-    const body = envelope("classify", { stageRunId: `${CANARY}-${runId}-run-classify` });
+    // A plain id: answer.sent logs it. The values keep their canaries.
+    const body = envelope("classify", { stageRunId: `${runId}-run-classify` });
     const res = await deliver(hook.base, "/classify", body, {
       stage: "classify",
       secret: HOOK_SECRET,
