@@ -6,17 +6,6 @@ import { TUNNEL_PROVIDERS, type TunnelConfig, type TunnelProvider } from "./tunn
 
 export type EchoMode = "signed" | "open";
 
-export interface OpenConfig {
-  /** Deliveries per source address per minute. */
-  ratePerIp: number;
-  /** Deliveries per hook per minute. */
-  ratePerHook: number;
-  /** Viewer reads per source address per minute. */
-  rateViewPerIp: number;
-  /** Proxies in front that append to `x-forwarded-for`; 0 uses the socket's address. */
-  trustedProxyHops: number;
-}
-
 export interface Config {
   /**
    * `signed` (the default): a signing secret, and optionally a service account.
@@ -24,8 +13,6 @@ export interface Config {
    * with the token Ravn sends, and keeps only what Ravn accepted.
    */
   echoMode: EchoMode;
-  /** Set in open mode only. */
-  open: OpenConfig | null;
   port: number;
   host: string;
   /**
@@ -100,11 +87,8 @@ Open mode: the one Ravn-run echo, for every org, with nothing to set up
                           hook, 24h) only once Ravn accepts it. The viewer
                           shows a hook's entries to the key in its #k=.
                           Refused with RAVN_HOOK_SECRET, RAVN_UNWRAP_TOKEN,
-                          RAVN_ACCESS_TOKEN_ONLY or VIEW_TOKEN.
-  RATE_PER_IP             deliveries per source address per minute (default 300)
-  RATE_PER_HOOK           deliveries per hook per minute (default 60)
-  RATE_VIEW_PER_IP        viewer reads per source address per minute (default 120)
-  TRUSTED_PROXY_HOPS      proxies in front that append to X-Forwarded-For (default 0)
+                          RAVN_ACCESS_TOKEN_ONLY or VIEW_TOKEN. Rate limiting
+                          is the ingress's job, not the hook's.
 
 Flags
   --tunnel[=P]      open a public HTTPS address at start and print it: a
@@ -165,7 +149,6 @@ export function parseConfig(
     throw new ConfigError(`ECHO_MODE: "${modeRaw}" is not one of signed, open`);
   }
   const echoMode: EchoMode = modeRaw;
-  let open: OpenConfig | null = null;
   if (echoMode === "open") {
     // ❗Open mode holds no credential of anyone's. One given to it is a
     // mistake to stop on, not to ignore: it would be one org's, on a hook
@@ -182,12 +165,6 @@ export function parseConfig(
         );
       }
     }
-    open = {
-      ratePerIp: integer(env.RATE_PER_IP ?? "300", "RATE_PER_IP", 1, 1_000_000),
-      ratePerHook: integer(env.RATE_PER_HOOK ?? "60", "RATE_PER_HOOK", 1, 1_000_000),
-      rateViewPerIp: integer(env.RATE_VIEW_PER_IP ?? "120", "RATE_VIEW_PER_IP", 1, 1_000_000),
-      trustedProxyHops: integer(env.TRUSTED_PROXY_HOPS ?? "0", "TRUSTED_PROXY_HOPS", 0, 10),
-    };
   }
 
   const port = integer(String(flags.get("port") ?? env.PORT ?? "8080"), "PORT", 0, 65535);
@@ -234,7 +211,6 @@ export function parseConfig(
   }
   return {
     echoMode,
-    open,
     port,
     host,
     secret,

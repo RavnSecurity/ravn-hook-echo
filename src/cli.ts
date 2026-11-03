@@ -1,10 +1,9 @@
 import { ServiceAccount } from "./account.js";
 import { Ravn, ravnUrls } from "./answers.js";
-import { type Config, ConfigError, type OpenConfig, parseConfig, USAGE } from "./config.js";
+import { type Config, ConfigError, parseConfig, USAGE } from "./config.js";
 import { McpReader } from "./mcp.js";
 import { OpenAnswerer, OpenStore } from "./open.js";
 import { interactive, promptSetup, whatToAsk } from "./prompt.js";
-import { RateLimiter } from "./ratelimit.js";
 import { fetchPublishedSchema, loadVendoredSchema, SCHEMA_ID, StageSchema } from "./schema.js";
 import { createHookServer, type ServerDeps } from "./server.js";
 import { HOOKABLE } from "./stages.js";
@@ -51,8 +50,8 @@ async function main(): Promise<void> {
   const store = new DeliveryStore({ retentionHours: cfg.retentionHours });
   setInterval(() => store.sweep(), 60_000).unref();
 
-  if (cfg.open) {
-    await runOpen(cfg, cfg.open, store, () => schema);
+  if (cfg.echoMode === "open") {
+    await runOpen(cfg, store, () => schema);
     return;
   }
 
@@ -208,7 +207,6 @@ async function main(): Promise<void> {
  */
 async function runOpen(
   cfg: Config,
-  open: OpenConfig,
   store: DeliveryStore,
   schema: () => StageSchema,
 ): Promise<void> {
@@ -220,14 +218,6 @@ async function runOpen(
     schema,
     store: openStore,
   });
-  const limits = {
-    ip: new RateLimiter({ limit: open.ratePerIp }),
-    hook: new RateLimiter({ limit: open.ratePerHook }),
-    view: new RateLimiter({ limit: open.rateViewPerIp }),
-  };
-  setInterval(() => {
-    for (const l of Object.values(limits)) l.sweep();
-  }, 60_000).unref();
   const server = createHookServer({
     secret: null,
     viewToken: "",
@@ -237,7 +227,7 @@ async function runOpen(
     store,
     schema,
     schemaId: SCHEMA_ID,
-    open: { answerer, store: openStore, limits, trustedHops: open.trustedProxyHops },
+    open: { answerer, store: openStore },
   });
 
   let up: Awaited<ReturnType<typeof listenPublic>> | undefined;
@@ -263,10 +253,6 @@ async function runOpen(
       `keeps only what Ravn accepts, the last ${openStore.perHook} per hook for ${cfg.retentionHours}h, in memory`,
   );
   console.log(`  answers ${cfg.answerStages.length ? cfg.answerStages.join(", ") : "none"}`);
-  console.log(
-    `  rate limits per minute: ${open.ratePerIp} per address, ${open.ratePerHook} per hook, ` +
-      `${open.rateViewPerIp} viewer reads per address`,
-  );
   console.log(`hook URL: ${base}/  (or ${base}/<stage>)`);
   console.log(`viewer: ${base}/view#k=<the key in Ravn's "Open in echo's viewer" link>`);
 }

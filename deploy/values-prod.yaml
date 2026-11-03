@@ -19,14 +19,19 @@ env:
   - {name: PUBLIC_BASE_URL, value: "https://echo-hook.ravnsecurity.io"}
   - {name: RAVN_URL, value: "https://apps.ravnsecurity.io"}
   - {name: ANSWER_STAGES, value: "classify,route,assess,review,follow-up,knowledge"}
-  # Per minute. Every org's deliveries come from Ravn's own egress, so the
-  # per-address limit is a ceiling for all of them together; per hook is the
-  # one that keeps orgs apart.
-  - {name: RATE_PER_HOOK, value: "60"}
-  - {name: RATE_PER_IP, value: "600"}
-  - {name: RATE_VIEW_PER_IP, value: "120"}
-  # ingress-nginx appends its peer to X-Forwarded-For (use-forwarded-headers,
-  # compute-full-forwarded-for in ravn-ops infra/platform/ingress-nginx). Its
-  # peer is the NLB, which does not pass the client's address on today, so
-  # per-address limits key on the NLB node until it does.
-  - {name: TRUSTED_PROXY_HOPS, value: "1"}
+
+# Rate limiting belongs to ingress-nginx, per client address, not to the hook.
+# ❗NOT turned on yet: ingress-nginx does not see the client's address today
+# (ravn-ops#265). The NLB terminates TLS with IP targets and no proxy protocol,
+# so nginx's peer is an NLB node, and `use-forwarded-headers: "true"` with the
+# default `proxy-real-ip-cidr` (0.0.0.0/0) makes it trust any X-Forwarded-For a
+# client sends. A limit here would key on the NLB node for honest clients (one
+# bucket shared by every org and Ravn itself) and on a spoofable header for
+# everyone else. Once ravn-ops#265 lands, uncomment. Sized for one Ravn sender
+# (every org's deliveries come from Ravn's egress; six stages per case, plus
+# retries) and viewer reads (one every 5 s per open tab):
+#
+# ingress:
+#   annotations:
+#     nginx.ingress.kubernetes.io/limit-rpm: "600"
+#     nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"

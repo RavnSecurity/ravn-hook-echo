@@ -335,12 +335,11 @@ own hook uses the signing secret and a service account, as above.
   only entries whose `Ravn-Echo-View` matches come back. A wrong key gets an
   empty list, the same as a key with nothing yet. Disconnecting in Ravn changes
   the key, so the old link shows nothing new.
-- **Rate limits**, per minute: deliveries per source address
-  (`RATE_PER_IP`, default 300) and per hook, by the packet's `impl.hookId`
-  (`RATE_PER_HOOK`, default 60), and viewer reads per source address
-  (`RATE_VIEW_PER_IP`, default 120). Past one, `429` with `Retry-After`. Ravn
-  retries a delivery, so nothing is lost. Behind proxies that append to
-  `X-Forwarded-For`, set `TRUSTED_PROXY_HOPS` to how many.
+- **Rate limiting is the ingress's job**, per client address, not the hook's
+  (`nginx.ingress.kubernetes.io/limit-rpm` in `deploy/values-prod.yaml`). It is
+  off in prod until ingress-nginx can see the client's address through the NLB
+  ([ravn-ops#265](https://github.com/RavnSecurity/ravn-ops/issues/265));
+  before that, a per-address limit would be one bucket for everyone.
 
 ## What it does with each delivery
 
@@ -608,8 +607,6 @@ check a substring search.
 | `ANSWER_STAGES` | all six | The stages to answer, comma-separated, or `none` |
 | `RAVN_URL` | `https://apps.ravnsecurity.io` | Where Ravn is |
 | `ECHO_MODE` | `signed` | `open` for the [Ravn echo](#open-mode-the-ravn-echo) |
-| `RATE_PER_IP`, `RATE_PER_HOOK`, `RATE_VIEW_PER_IP` | `300`, `60`, `120` | Open mode's limits, per minute |
-| `TRUSTED_PROXY_HOPS` | `0` | Open mode: proxies in front that append to `X-Forwarded-For` |
 
 Other endpoints: `GET /healthz` answers `{ "ok": true, "mode": "signed", "configured": true }`, and
 `200` even when unconfigured, so a pod waiting for its secret stays up.

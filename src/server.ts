@@ -13,7 +13,6 @@ import {
   type OpenStore,
   viewHashOf,
 } from "./open.js";
-import { clientIp, type RateLimiter } from "./ratelimit.js";
 import type { SchemaFailure, StageSchema } from "./schema.js";
 import { shapeOf } from "./shape.js";
 import {
@@ -42,16 +41,6 @@ export const OPEN_UNAUTHORIZED =
 export interface OpenDeps {
   answerer: OpenAnswerer;
   store: OpenStore;
-  limits: {
-    /** Deliveries per source address. */
-    ip: RateLimiter;
-    /** Deliveries per `impl.hookId`. */
-    hook: RateLimiter;
-    /** Viewer reads per source address. */
-    view: RateLimiter;
-  };
-  /** Proxies in front that append to `x-forwarded-for`. */
-  trustedHops: number;
 }
 
 /**
@@ -197,12 +186,6 @@ function openDeliveries(
   deps: ServerDeps,
   open: OpenDeps,
 ): void {
-  const limited = open.limits.view.take(clientIp(req, open.trustedHops));
-  if (!limited.ok) {
-    res.setHeader("retry-after", String(limited.retryAfterS));
-    viewer(res, 429, "application/json", JSON.stringify({ error: "rate limited" }));
-    return;
-  }
   const key = bearerOf(req);
   if (!key || key.length > 512) {
     res.setHeader("www-authenticate", "Bearer");
@@ -261,10 +244,6 @@ async function receive(
   // Not configured: refuse before reading anything. Ravn retries a 5xx, so
   // nothing is lost while the secret is on its way.
   if (!open && deps.secret === null) return send(res, 503, { error: NOT_CONFIGURED });
-  if (open) {
-    const limited = open.limits.ip.take(clientIp(req, open.trustedHops));
-    if (!limited.ok) return tooMany(res, limited.retryAfterS);
-  }
 
   const started = deps.now?.() ?? Date.now();
   const body = await readBody(req);
@@ -323,12 +302,8 @@ async function receive(
   } catch {
     parseError = "not JSON";
   }
-  // Open mode: each hook gets its own budget, before any mode's delay.
+  // Open mode stores what Ravn accepts under the hook the packet names.
   const hookId = open && parseError === null ? hookIdOf(parsed) : null;
-  if (open && hookId) {
-    const limited = open.limits.hook.take(hookId);
-    if (!limited.ok) return tooMany(res, limited.retryAfterS);
-  }
   let schemaValid: boolean | null = null;
   let schemaFailures: SchemaFailure[] = [];
   const schema = deps.schema();
@@ -445,11 +420,6 @@ async function receive(
       });
     }
   }
-}
-
-function tooMany(res: ServerResponse, retryAfterS: number): void {
-  res.setHeader("retry-after", String(retryAfterS));
-  send(res, 429, { error: "rate limited: try again later" });
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {

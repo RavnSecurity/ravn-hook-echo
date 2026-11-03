@@ -5,7 +5,6 @@ import { after, before, describe, test } from "node:test";
 import { ravnUrls } from "../src/answers.js";
 import { parseConfig } from "../src/config.js";
 import { hashViewKey, OpenAnswerer, type OpenRecord, OpenStore } from "../src/open.js";
-import { RateLimiter } from "../src/ratelimit.js";
 import { SCHEMA_ID } from "../src/schema.js";
 import { createHookServer } from "../src/server.js";
 import { HOOKABLE, type HookableStage, stageRequestedEvent } from "../src/stages.js";
@@ -21,10 +20,7 @@ interface OpenHook {
   close: () => Promise<void>;
 }
 
-async function openHook(
-  fake: FakeRavn,
-  limits: { ip?: number; hook?: number; view?: number } = {},
-): Promise<OpenHook> {
+async function openHook(fake: FakeRavn): Promise<OpenHook> {
   const store = new OpenStore();
   const answerer = new OpenAnswerer({
     answersUrl: ravnUrls(fake.base).answers,
@@ -42,16 +38,7 @@ async function openHook(
     store: new DeliveryStore({ retentionHours: 24 }),
     schema: () => schema,
     schemaId: SCHEMA_ID,
-    open: {
-      answerer,
-      store,
-      limits: {
-        ip: new RateLimiter({ limit: limits.ip ?? 10_000 }),
-        hook: new RateLimiter({ limit: limits.hook ?? 10_000 }),
-        view: new RateLimiter({ limit: limits.view ?? 10_000 }),
-      },
-      trustedHops: 0,
-    },
+    open: { answerer, store },
     sleep: async () => {},
   });
   await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -288,63 +275,6 @@ describe("open mode (ECHO_MODE=open)", () => {
   });
 });
 
-describe("open mode rate limits", () => {
-  let fake: FakeRavn;
-  before(async () => {
-    fake = new FakeRavn();
-    await fake.start();
-  });
-  after(() => fake.close());
-
-  test("per hook: past the limit, 429 with retry-after, and nothing answered", async () => {
-    const x = await openHook(fake, { hook: 2 });
-    try {
-      const key = hashViewKey(newViewKey());
-      const statuses: number[] = [];
-      const before = fake.answers.length;
-      for (let i = 0; i < 3; i++) {
-        const p = packet("route", "hook-busy");
-        const r = await post(x.base, "/route", p, {
-          token: fake.newAnswerToken(p.stageRunId),
-          view: key,
-          stage: "route",
-        });
-        statuses.push(r.status);
-      }
-      assert.deepEqual(statuses, [200, 200, 429]);
-      // Another hook still has its own budget.
-      const other = packet("route", "hook-quiet");
-      const r = await post(x.base, "/route", other, {
-        token: fake.newAnswerToken(other.stageRunId),
-        view: key,
-        stage: "route",
-      });
-      assert.equal(r.status, 200);
-      await x.answerer.idle();
-      assert.equal(fake.answers.length - before, 3);
-    } finally {
-      await x.close();
-    }
-  });
-
-  test("per source address: deliveries and viewer reads", async () => {
-    const x = await openHook(fake, { ip: 1, view: 1 });
-    try {
-      const p = packet("route", "hook-ip");
-      const h = { token: fake.newAnswerToken(p.stageRunId), view: hashViewKey(newViewKey()) };
-      assert.equal((await post(x.base, "/route", p, h)).status, 200);
-      const limited = await fetch(`${x.base}/route`, { method: "POST", body: "{}" });
-      assert.equal(limited.status, 429);
-      assert.ok(Number(limited.headers.get("retry-after")) >= 1);
-      assert.equal((await view(x.base, newViewKey())).status, 200);
-      assert.equal((await view(x.base, newViewKey())).status, 429);
-      await x.answerer.idle();
-    } finally {
-      await x.close();
-    }
-  });
-});
-
 describe("OpenStore", () => {
   const rec = (hookId: string, viewHash: string, at: number): OpenRecord => ({
     seq: 0,
@@ -412,23 +342,16 @@ describe("OpenStore", () => {
 });
 
 describe("open mode config", () => {
-  test("ECHO_MODE=open needs nothing, and sets the limits", () => {
+  test("ECHO_MODE=open needs nothing", () => {
     const c = parseConfig([], { ECHO_MODE: "open" });
     assert.ok(c !== "help");
     assert.equal(c.echoMode, "open");
-    assert.deepEqual(c.open, {
-      ratePerIp: 300,
-      ratePerHook: 60,
-      rateViewPerIp: 120,
-      trustedProxyHops: 0,
-    });
   });
 
   test("the default is signed, as before", () => {
     const c = parseConfig([], { RAVN_HOOK_SECRET: "s" });
     assert.ok(c !== "help");
     assert.equal(c.echoMode, "signed");
-    assert.equal(c.open, null);
   });
 
   test("open mode refuses any org's credential", () => {
@@ -448,20 +371,5 @@ describe("open mode config", () => {
 
   test("an unknown ECHO_MODE is refused", () => {
     assert.throws(() => parseConfig([], { ECHO_MODE: "public" }), /ECHO_MODE/);
-  });
-});
-
-describe("clientIp", () => {
-  test("takes the entry the trusted proxies wrote, never one the client could", async () => {
-    const { clientIp } = await import("../src/ratelimit.js");
-    const req = (xff: string | undefined) =>
-      ({
-        headers: xff === undefined ? {} : { "x-forwarded-for": xff },
-        socket: { remoteAddress: "10.0.0.9" },
-      }) as unknown as import("node:http").IncomingMessage;
-    assert.equal(clientIp(req("1.1.1.1, 2.2.2.2"), 0), "10.0.0.9");
-    assert.equal(clientIp(req("spoofed, 2.2.2.2"), 1), "2.2.2.2");
-    assert.equal(clientIp(req("spoofed, 2.2.2.2, 3.3.3.3"), 2), "2.2.2.2");
-    assert.equal(clientIp(req(undefined), 1), "10.0.0.9");
   });
 });

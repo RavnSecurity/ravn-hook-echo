@@ -276,11 +276,25 @@ export interface AnswerReply {
   replayed?: boolean;
 }
 
-export async function readAnswerReply(res: Response): Promise<AnswerReply> {
+/**
+ * A reply that is not JSON falls back to `http-<status>`, with a warning that
+ * names the status and content type. ❗Never the body: what a proxy or an
+ * error page put there is not ours to log.
+ */
+export async function readAnswerReply(
+  res: Response,
+  warn: (line: string) => void = (line) => console.warn(line),
+): Promise<AnswerReply> {
   let json: Record<string, unknown> = {};
   try {
-    json = (await res.json()) as Record<string, unknown>;
-  } catch {}
+    const parsed: unknown = await res.json();
+    if (parsed && typeof parsed === "object") json = parsed as Record<string, unknown>;
+  } catch {
+    const type = (res.headers.get("content-type") ?? "none")
+      .replace(/[^\x20-\x7e]/g, "?")
+      .slice(0, 100);
+    warn(`answer: Ravn replied ${res.status} with a body that is not JSON (content-type: ${type})`);
+  }
   const code =
     typeof json.answer === "string"
       ? json.answer
