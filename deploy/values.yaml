@@ -8,10 +8,9 @@ image:
   repository: "244689414108.dkr.ecr.us-west-2.amazonaws.com/ravn/svc-hook-echo"
   tag: ""
 
-# ❗One replica, always. The hook rotates its refresh token on every renew, and
-# a spent one presented again revokes the whole chain: two pods sharing (or
-# racing for) one state file is exactly that. The chart refuses replicaCount > 1
-# or autoscaling when persistence is on.
+# ❗One replica, always. Open mode keeps its deliveries in memory, in this one
+# process: the viewer and Clear only see the store of the pod they reach, so a
+# second pod would hide about half the deliveries from each.
 replicaCount: 1
 
 # The image listens on 8080 (Dockerfile: PORT=8080). Chart Service 80 -> 8080.
@@ -38,19 +37,13 @@ metrics:
   enabled: true
   path: /metrics
 
-# The refresh token chain lives here (RAVN_STATE_FILE). A restart that loses it
-# loses the service account, since the unwrap token in the env is spent by then.
-# The chart adds strategy: Recreate, as an RWO volume can't be shared by a
-# rolling update.
+# No volume. Open mode holds no credential and writes no state file, so the
+# chart leaves persistence off and rolls a deploy instead of using Recreate.
+# Turning it off prunes the old svc-hook-echo-data PVC (ravn-hook-echo#35).
 persistence:
-  enabled: true
-  size: 1Gi
-  mountPath: /state
+  enabled: false
 
-# The image runs as `node` (1000). A fresh EBS volume is root-owned; fsGroup
-# makes /state writable by the hook.
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000
   runAsGroup: 1000
-  fsGroup: 1000
