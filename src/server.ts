@@ -13,6 +13,7 @@ import {
   type OpenStore,
   viewHashOf,
 } from "./open.js";
+import type { DeliveryOutcome, Ops } from "./ops.js";
 import type { SchemaFailure, StageSchema } from "./schema.js";
 import { shapeOf } from "./shape.js";
 import {
@@ -62,6 +63,8 @@ export interface ServerDeps {
   ravn?: Ravn;
   /** Set: open mode. `secret`, `viewToken`, `store` and `ravn` are then unused. */
   open?: OpenDeps;
+  /** A log line per delivery, and `/metrics`. Absent: neither. */
+  ops?: Ops;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
   /** One line per clear, a count only. Defaults to stdout. */
@@ -113,6 +116,8 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
       case "/api/deliveries":
       case "/view/api/deliveries":
         return deps.open ? openDeliveries(req, res, deps, deps.open) : deliveries(req, res, deps);
+      case "/metrics":
+        return metrics(req, res, deps);
       case "/healthz":
         // Always 200 while the process serves: the liveness probe restarts on anything else.
         return send(res, 200, {
@@ -142,6 +147,25 @@ function viewer(res: ServerResponse, status: number, type: string, body: string)
   for (const [k, v] of Object.entries(VIEWER_HEADERS)) res.setHeader(k, v);
   res.writeHead(status, { "content-type": type, "content-length": Buffer.byteLength(body) });
   res.end(body);
+}
+
+/**
+ * Prometheus scrapes the pod directly. Anything that came through a proxy
+ * (the ingress, a tunnel) carries x-forwarded-for, and is not shown the
+ * counters: they say how much the hook is used, which is the operator's.
+ */
+function metrics(req: IncomingMessage, res: ServerResponse, deps: ServerDeps): void {
+  if (!deps.ops || req.headers["x-forwarded-for"] !== undefined) {
+    send(res, 404, { error: "not found" });
+    return;
+  }
+  const text = deps.ops.metrics();
+  res.writeHead(200, {
+    "content-type": "text/plain; version=0.0.4; charset=utf-8",
+    "content-length": Buffer.byteLength(text),
+    "cache-control": "no-store",
+  });
+  res.end(text);
 }
 
 function bearerOf(req: IncomingMessage): string | null {
@@ -298,13 +322,40 @@ async function receive(
   route: NonNullable<ReturnType<typeof parseRoute>>,
 ): Promise<void> {
   const open = deps.open;
+  const attemptRaw = header(req, ATTEMPT_HEADER);
+  const attempt = attemptRaw && /^\d{1,6}$/.test(attemptRaw) ? Number(attemptRaw) : null;
+  const deliveryId = header(req, DELIVERY_HEADER);
+  // What a refusal logs: what the URL and headers say, nothing from the body.
+  const refused = (status: number, outcome: DeliveryOutcome, body: unknown) => {
+    deps.ops?.delivery({
+      stage: route.stage === "root" ? null : route.stage,
+      outcome,
+      status,
+      hookMode: open ? "open" : "signed",
+      mode: describeMode(route.mode),
+      deliveryId,
+      attempt,
+      ...(open
+        ? {
+            token:
+              answerTokenOf(header(req, ANSWER_TOKEN_HEADER)) !== null &&
+              viewHashOf(header(req, ECHO_VIEW_HEADER)) !== null,
+          }
+        : { signature: header(req, SIGNATURE_HEADER) !== null }),
+      schemaOk: null,
+    });
+    send(res, status, body);
+  };
+
   // Not configured: refuse before reading anything. Ravn retries a 5xx, so
   // nothing is lost while the secret is on its way.
-  if (!open && deps.secret === null) return send(res, 503, { error: NOT_CONFIGURED });
+  if (!open && deps.secret === null) {
+    return refused(503, "not_configured", { error: NOT_CONFIGURED });
+  }
 
   const started = deps.now?.() ?? Date.now();
   const body = await readBody(req);
-  if (body === "too-large") return send(res, 413, { error: "body too large" });
+  if (body === "too-large") return refused(413, "too_large", { error: "body too large" });
 
   // 1. Verify. Signed: unsigned or bad is a 401, and nothing is stored. Open:
   // only Ravn can verify its token, so a post without one is refused here and
@@ -313,18 +364,15 @@ async function receive(
   if (open) {
     const token = answerTokenOf(header(req, ANSWER_TOKEN_HEADER));
     const viewHash = viewHashOf(header(req, ECHO_VIEW_HEADER));
-    if (!token || !viewHash) return send(res, 401, { error: OPEN_UNAUTHORIZED });
+    if (!token || !viewHash) return refused(401, "unauthorized", { error: OPEN_UNAUTHORIZED });
     gate = { token, viewHash };
   } else if (
     !verifySignature(body, header(req, SIGNATURE_HEADER) ?? undefined, deps.secret ?? "")
   ) {
-    return send(res, 401, { error: "missing or invalid x-ravn-signature" });
+    return refused(401, "unauthorized", { error: "missing or invalid x-ravn-signature" });
   }
 
   const event = header(req, EVENT_HEADER);
-  const deliveryId = header(req, DELIVERY_HEADER);
-  const attemptRaw = header(req, ATTEMPT_HEADER);
-  const attempt = attemptRaw && /^\d{1,6}$/.test(attemptRaw) ? Number(attemptRaw) : null;
 
   // 2. Dedupe on x-ravn-delivery, stable across retries. Open mode keeps
   // nothing about a post Ravn has not vouched for, so it goes by the attempt.
@@ -422,6 +470,25 @@ async function receive(
   };
   if (deps.showValues && parseError === null) record.body = parsed;
   if (!open) deps.store.add(record);
+
+  deps.ops?.delivery({
+    stage,
+    outcome:
+      stage === null
+        ? "no_stage"
+        : decision.status < 200 || decision.status >= 300
+          ? "mode_status"
+          : schemaValid === true
+            ? "ok"
+            : "schema_invalid",
+    status: decision.status,
+    hookMode: open ? "open" : "signed",
+    mode: record.mode,
+    deliveryId,
+    attempt,
+    ...(open ? { token: true } : { signature: true }),
+    schemaOk: schemaValid,
+  });
 
   send(res, decision.status, {
     stage,

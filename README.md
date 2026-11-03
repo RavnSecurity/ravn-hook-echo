@@ -635,7 +635,8 @@ is a `405`. What was cleared can't be brought back.
 | `ECHO_MODE` | `signed` | `open` for the [Ravn echo](#open-mode-the-ravn-echo) |
 
 Other endpoints: `GET /healthz` answers `{ "ok": true, "mode": "signed", "configured": true }`, and
-`200` even when unconfigured, so a pod waiting for its secret stays up.
+`200` even when unconfigured, so a pod waiting for its secret stays up. `GET /metrics` serves
+[the counters](#logs-and-metrics) to Prometheus.
 
 ### Unconfigured
 
@@ -655,13 +656,37 @@ On a terminal it asks for the missing token and secret instead
 ([Run it on your laptop](#run-it-on-your-laptop)); a secret typed there takes
 effect at once.
 
-### Logs
+### Logs and metrics
 
-Nothing the hook prints carries a token, a secret or a value from a packet, so
-its logs can be shipped to a log store. The one exception is a viewer token it
-generated itself, printed once so you can open the viewer; set `VIEW_TOKEN` and
-the printed URL says `#k=<VIEW_TOKEN>` instead. A test runs the real CLI with
-marked credentials and canary packets and searches everything it printed.
+After the start-up banner, the hook prints one JSON line to stdout per
+delivery and per answer, for a log store such as Loki:
+
+```json
+{"at":"…","event":"delivery.received","stage":"assess","outcome":"ok","status":200,"hookMode":"open","mode":"ok","deliveryId":"dlv_…","attempt":1,"token":true,"schemaOk":true}
+{"at":"…","event":"answer.sent","stage":"assess","hookMode":"open","stageRunId":"run_…","attempt":1,"status":200,"code":"accepted","latencyMs":84}
+```
+
+- `delivery.received`: every POST to a hook URL, refusals included. `outcome`
+  is `ok`, `schema_invalid`, `mode_status` (a [mode](#modes-misbehaving-on-request)
+  chose the status), `no_stage`, `unauthorized`, `not_configured` or
+  `too_large`. Signed mode says whether `x-ravn-signature` was there
+  (`signature`), open mode whether `Ravn-Answer-Token` and `Ravn-Echo-View`
+  were (`token`).
+- `answer.sent`: every answer posted to Ravn, with Ravn's code, or `network` /
+  `no-token` when nothing came back.
+
+`GET /metrics` serves Prometheus counters: `echo_deliveries_total{stage,outcome}`
+and `echo_answers_total{stage,code}`. It answers `404` to anything that came
+through a proxy (any `x-forwarded-for`), so it is not public behind the ingress
+or a tunnel; Prometheus scrapes the pod directly.
+
+Nothing the hook prints carries a token, a secret, a view key or a value from a
+packet, so its logs can be shipped to a log store. Ids and codes are printed
+only when they look like ids and codes; anything else is `null` (`other` for a
+code). The one exception is a viewer token it generated itself, printed once so
+you can open the viewer; set `VIEW_TOKEN` and the printed URL says
+`#k=<VIEW_TOKEN>` instead. A test runs the real CLI with marked credentials and
+canary packets and searches everything it printed.
 
 ## Deploy
 

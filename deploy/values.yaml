@@ -31,6 +31,13 @@ ingress:
 healthCheck:
   path: /healthz
 
+# A ServiceMonitor for /metrics: deliveries by stage and outcome, answers by
+# Ravn's code. The hook refuses /metrics to anything with x-forwarded-for, so
+# the ingress doesn't serve it publicly; Prometheus scrapes the pod directly.
+metrics:
+  enabled: true
+  path: /metrics
+
 # The refresh token chain lives here (RAVN_STATE_FILE). A restart that loses it
 # loses the service account, since the unwrap token in the env is spent by then.
 # The chart adds strategy: Recreate, as an RWO volume can't be shared by a

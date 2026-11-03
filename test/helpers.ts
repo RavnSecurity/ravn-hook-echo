@@ -1,5 +1,6 @@
 import type { AddressInfo } from "node:net";
 import type { Ravn } from "../src/answers.js";
+import type { Ops } from "../src/ops.js";
 import { loadVendoredSchema, SCHEMA_ID, StageSchema } from "../src/schema.js";
 import { createHookServer } from "../src/server.js";
 import { signBody } from "../src/signature.js";
@@ -20,7 +21,9 @@ export interface Running {
   close: () => Promise<void>;
 }
 
-export async function start(opts: { showValues?: boolean; ravn?: Ravn } = {}): Promise<Running> {
+export async function start(
+  opts: { showValues?: boolean; ravn?: Ravn; ops?: Ops } = {},
+): Promise<Running> {
   const store = new DeliveryStore({ retentionHours: 24 });
   const sleeps: number[] = [];
   const lines: string[] = [];
@@ -34,6 +37,7 @@ export async function start(opts: { showValues?: boolean; ravn?: Ravn } = {}): P
     schema: () => schema,
     schemaId: SCHEMA_ID,
     ...(opts.ravn ? { ravn: opts.ravn } : {}),
+    ...(opts.ops ? { ops: opts.ops } : {}),
     sleep: async (ms) => {
       sleeps.push(ms);
     },
