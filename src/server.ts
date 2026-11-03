@@ -3,6 +3,16 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { Ravn } from "./answers.js";
 import { echoOutput, seedOf } from "./echo.js";
 import { decide, describeMode, parseRoute } from "./modes.js";
+import {
+  ANSWER_TOKEN_HEADER,
+  answerTokenOf,
+  ECHO_VIEW_HEADER,
+  hashViewKey,
+  hookIdOf,
+  type OpenAnswerer,
+  type OpenStore,
+  viewHashOf,
+} from "./open.js";
 import type { SchemaFailure, StageSchema } from "./schema.js";
 import { shapeOf } from "./shape.js";
 import {
@@ -23,6 +33,16 @@ export const MAX_BODY_BYTES = 1024 * 1024;
 export const NOT_CONFIGURED =
   "not configured: RAVN_HOOK_SECRET is not set, so this hook cannot verify deliveries";
 
+/** Why a delivery without Ravn's answer token is refused in open mode. */
+export const OPEN_UNAUTHORIZED =
+  "open mode: a delivery needs Ravn-Answer-Token and Ravn-Echo-View, which Ravn sends only to its own echo hook";
+
+/** `ECHO_MODE=open`: no secret, no service account; see src/open.ts. */
+export interface OpenDeps {
+  answerer: OpenAnswerer;
+  store: OpenStore;
+}
+
 /**
  * `secret` and `ravn` are read on every request, so setting either on the
  * object passed in (as the start-up prompt does) takes effect at once.
@@ -40,6 +60,8 @@ export interface ServerDeps {
   schemaId: string;
   /** The service account's side: answers and MCP reads. Absent, the hook only receives. */
   ravn?: Ravn;
+  /** Set: open mode. `secret`, `viewToken`, `store` and `ravn` are then unused. */
+  open?: OpenDeps;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
 }
@@ -78,10 +100,14 @@ async function handle(req: IncomingMessage, res: ServerResponse, deps: ServerDep
         return viewer(res, 200, "text/css; charset=utf-8", VIEW_CSS);
       case "/api/deliveries":
       case "/view/api/deliveries":
-        return deliveries(req, res, deps);
+        return deps.open ? openDeliveries(req, res, deps, deps.open) : deliveries(req, res, deps);
       case "/healthz":
         // Always 200 while the process serves: the liveness probe restarts on anything else.
-        return send(res, 200, { ok: true, configured: deps.secret !== null });
+        return send(res, 200, {
+          ok: true,
+          mode: deps.open ? "open" : "signed",
+          configured: deps.open !== undefined || deps.secret !== null,
+        });
       case "/":
         return send(res, 200, {
           name: "ravn-hook-echo",
@@ -106,11 +132,15 @@ function viewer(res: ServerResponse, status: number, type: string, body: string)
   res.end(body);
 }
 
+function bearerOf(req: IncomingMessage): string | null {
+  const m = /^Bearer\s+(\S+)$/i.exec(req.headers.authorization ?? "");
+  return m?.[1] ?? null;
+}
+
 function bearerMatches(req: IncomingMessage, token: string): boolean {
-  const header = req.headers.authorization ?? "";
-  const m = /^Bearer\s+(\S+)$/i.exec(header);
-  if (!m?.[1]) return false;
-  const a = Buffer.from(m[1], "utf8");
+  const given = bearerOf(req);
+  if (!given) return false;
+  const a = Buffer.from(given, "utf8");
   const b = Buffer.from(token, "utf8");
   return a.length === b.length && timingSafeEqual(a, b);
 }
@@ -145,6 +175,46 @@ function deliveries(req: IncomingMessage, res: ServerResponse, deps: ServerDeps)
   );
 }
 
+/**
+ * Open mode's viewer: the key is the bearer, hashed here, and only entries
+ * stored under that hash come back. A wrong key and a key with nothing yet
+ * get the same answer, an empty list, so the reply says nothing about keys.
+ */
+function openDeliveries(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: ServerDeps,
+  open: OpenDeps,
+): void {
+  const key = bearerOf(req);
+  if (!key || key.length > 512) {
+    res.setHeader("www-authenticate", "Bearer");
+    viewer(res, 401, "application/json", JSON.stringify({ error: "bad or missing key" }));
+    return;
+  }
+  const now = deps.now?.() ?? Date.now();
+  const list = open.store.list(hashViewKey(key), now).map((r) => {
+    const { body, viewHash: _v, storedAt: _s, ...rest } = r;
+    return deps.showValues ? { ...rest, body } : rest;
+  });
+  viewer(
+    res,
+    200,
+    "application/json",
+    JSON.stringify({
+      mode: "open",
+      schema: { id: deps.schemaId, source: deps.schema().source.kind },
+      retentionHours: deps.retentionHours,
+      perHook: open.store.perHook,
+      showValues: deps.showValues,
+      configured: true,
+      account: null,
+      answerStages: open.answerer.answerStages,
+      deliveries: list,
+    }),
+  );
+}
+
 async function readBody(req: IncomingMessage): Promise<Buffer | "too-large"> {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -170,16 +240,27 @@ async function receive(
   path: string,
   route: NonNullable<ReturnType<typeof parseRoute>>,
 ): Promise<void> {
+  const open = deps.open;
   // Not configured: refuse before reading anything. Ravn retries a 5xx, so
   // nothing is lost while the secret is on its way.
-  if (deps.secret === null) return send(res, 503, { error: NOT_CONFIGURED });
+  if (!open && deps.secret === null) return send(res, 503, { error: NOT_CONFIGURED });
 
   const started = deps.now?.() ?? Date.now();
   const body = await readBody(req);
   if (body === "too-large") return send(res, 413, { error: "body too large" });
 
-  // 1. Verify. Unsigned or bad: 401, and nothing is stored.
-  if (!verifySignature(body, header(req, SIGNATURE_HEADER) ?? undefined, deps.secret)) {
+  // 1. Verify. Signed: unsigned or bad is a 401, and nothing is stored. Open:
+  // only Ravn can verify its token, so a post without one is refused here and
+  // one with a token is checked by answering with it (src/open.ts).
+  let gate: { token: string; viewHash: string } | null = null;
+  if (open) {
+    const token = answerTokenOf(header(req, ANSWER_TOKEN_HEADER));
+    const viewHash = viewHashOf(header(req, ECHO_VIEW_HEADER));
+    if (!token || !viewHash) return send(res, 401, { error: OPEN_UNAUTHORIZED });
+    gate = { token, viewHash };
+  } else if (
+    !verifySignature(body, header(req, SIGNATURE_HEADER) ?? undefined, deps.secret ?? "")
+  ) {
     return send(res, 401, { error: "missing or invalid x-ravn-signature" });
   }
 
@@ -188,8 +269,9 @@ async function receive(
   const attemptRaw = header(req, ATTEMPT_HEADER);
   const attempt = attemptRaw && /^\d{1,6}$/.test(attemptRaw) ? Number(attemptRaw) : null;
 
-  // 2. Dedupe on x-ravn-delivery, stable across retries.
-  const priorSeen = deps.store.seen(deliveryId, started);
+  // 2. Dedupe on x-ravn-delivery, stable across retries. Open mode keeps
+  // nothing about a post Ravn has not vouched for, so it goes by the attempt.
+  const priorSeen = open ? Math.max(0, (attempt ?? 1) - 1) : deps.store.seen(deliveryId, started);
   const seen = priorSeen + 1;
   const duplicate = priorSeen > 0;
 
@@ -220,6 +302,8 @@ async function receive(
   } catch {
     parseError = "not JSON";
   }
+  // Open mode stores what Ravn accepts under the hook the packet names.
+  const hookId = open && parseError === null ? hookIdOf(parsed) : null;
   let schemaValid: boolean | null = null;
   let schemaFailures: SchemaFailure[] = [];
   const schema = deps.schema();
@@ -257,7 +341,8 @@ async function receive(
   if (decision.delayMs > 0) await (deps.sleep ?? defaultSleep)(decision.delayMs);
 
   const record: DeliveryRecord = {
-    seq: deps.store.nextSeq(),
+    // Open mode numbers a record when it is stored, if it ever is.
+    seq: open ? 0 : deps.store.nextSeq(),
     receivedAt: new Date(started).toISOString(),
     path,
     mode: describeMode(route.mode),
@@ -267,7 +352,7 @@ async function receive(
     attempt,
     seen,
     duplicate,
-    signatureValid: true,
+    signatureValid: open ? null : true,
     schemaValid,
     schemaFailures,
     parseError,
@@ -279,7 +364,7 @@ async function receive(
     shape: parseError === null ? shapeOf(parsed, schema.knownKeys) : null,
   };
   if (deps.showValues && parseError === null) record.body = parsed;
-  deps.store.add(record);
+  if (!open) deps.store.add(record);
 
   send(res, decision.status, {
     stage,
@@ -291,6 +376,25 @@ async function receive(
     schema: { valid: schemaValid, failures: schemaFailures },
     output: decision.status >= 200 && decision.status < 300 ? echo : null,
   });
+
+  // 6. Open mode: answer with Ravn's token, after the response. The record is
+  // stored only if Ravn accepts the answer.
+  if (open) {
+    const ok = decision.status >= 200 && decision.status < 300;
+    if (ok && gate && hookId && stage && schemaValid === true && echo) {
+      open.answerer.delivered({
+        record,
+        mode: route.mode,
+        stage,
+        envelope: parsed as Record<string, unknown>,
+        echo,
+        token: gate.token,
+        hookId,
+        viewHash: gate.viewHash,
+      });
+    }
+    return;
+  }
 
   // 6. Answer as the service account, and read over MCP, after the response.
   if (deps.ravn && stage) {

@@ -2,32 +2,33 @@
 # The image tag is NOT here: it is the lane record, argo-apps
 # lanes/prod/svc-hook-echo.yaml, written by .github/workflows/deploy.yml.
 
-# ravn/prod/svc-hook-echo/hook holds RAVN_HOOK_SECRET, RAVN_UNWRAP_TOKEN and
-# VIEW_TOKEN. Tofu creates the container only; a person writes the value once
-# (Ravn mints the first two). Until then ESO can't sync it and the Secret does
-# not exist.
-externalSecrets:
-  - name: svc-hook-echo-hook
-    remoteKey: ravn/prod/svc-hook-echo/hook
-    refreshInterval: 1h
-
-# ❗NOT optional, on purpose. The values are read when the container starts,
-# so an optional Secret that ESO syncs a few seconds after the pod starts would
-# leave the hook unconfigured until someone restarts it. Required, the pod
-# waits in CreateContainerConfigError until ESO has synced, then starts with
-# its credentials. The secret is seeded before the Application exists
-# (ravn-hook-echo#13). The app's unconfigured mode stays, for local runs.
-# VIEW_TOKEN comes from here too, so the viewer URL survives restarts.
-# Env is read at start: after the value is written, restart the pod.
-envFrom:
-  - secretRef:
-      name: svc-hook-echo-hook
+# ❗Open mode (ravn-platform#821): the one Ravn-run echo, for every org's
+# *Use Ravn echo* hook. It holds no credential of anyone's: no signing secret,
+# no service account, no VIEW_TOKEN. It answers with the Ravn-Answer-Token each
+# delivery carries, and keeps a delivery (in memory) only once Ravn accepts
+# that answer. The app refuses to start in open mode if any of those
+# credentials is set, so the old secretRef (ravn/prod/svc-hook-echo/hook) is
+# gone from here. Retire that secret's container in ravn-ops separately.
+#
+# Deploy this only once Ravn sends Ravn-Answer-Token (ravn-platform#821, task
+# A): before then every delivery here is refused with 401.
 
 # Helm replaces lists: this is the whole env.
 env:
+  - {name: ECHO_MODE, value: "open"}
   - {name: PUBLIC_BASE_URL, value: "https://echo-hook.ravnsecurity.io"}
   - {name: RAVN_URL, value: "https://apps.ravnsecurity.io"}
   - {name: ANSWER_STAGES, value: "classify,route,assess,review,follow-up,knowledge"}
-  # On the PVC (values.yaml). Used before RAVN_UNWRAP_TOKEN on every restart:
-  # a spent unwrap token beside a live chain is the normal state.
-  - {name: RAVN_STATE_FILE, value: "/state/state.json"}
+
+# Rate limiting belongs to ingress-nginx, per client address, not to the hook.
+# ingress-nginx gets the real client address from the NLB's PROXY protocol v2
+# and ignores a client's own X-Forwarded-For (ravn-ops#265, cut over in
+# ravn-ops#266), so this keys on the client. Sized for one Ravn sender (every
+# org's deliveries come from Ravn's egress; six stages per case, plus retries)
+# and viewer reads (one every 5 s per open tab). Over it, nginx answers 503 and
+# Ravn retries the delivery, so nothing is lost. Merges with `ingress` in
+# values.yaml.
+ingress:
+  annotations:
+    nginx.ingress.kubernetes.io/limit-rpm: "600"
+    nginx.ingress.kubernetes.io/limit-burst-multiplier: "5"

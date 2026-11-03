@@ -198,9 +198,7 @@ export class Ravn {
     rec.latencyMs = Math.max(0, this.now() - started);
   }
 
-  private async post(
-    body: Record<string, unknown>,
-  ): Promise<{ status: number | null; code: string; paths?: string[]; replayed?: boolean }> {
+  private async post(body: Record<string, unknown>): Promise<AnswerReply> {
     let token = await this.account.accessToken();
     if (!token) return { status: null, code: "no-token" };
     for (let tries = 0; ; tries++) {
@@ -226,28 +224,7 @@ export class Ravn {
           continue;
         }
       }
-      let json: Record<string, unknown> = {};
-      try {
-        json = (await res.json()) as Record<string, unknown>;
-      } catch {}
-      const code =
-        typeof json.answer === "string"
-          ? json.answer
-          : typeof json.code === "string"
-            ? json.code
-            : `http-${res.status}`;
-      const paths = Array.isArray(json.paths)
-        ? json.paths
-            .filter((p): p is string => typeof p === "string")
-            .slice(0, 50)
-            .map((p) => p.slice(0, 200))
-        : undefined;
-      return {
-        status: res.status,
-        code,
-        ...(paths ? { paths } : {}),
-        ...(json.replayed === true ? { replayed: true } : {}),
-      };
+      return readAnswerReply(res);
     }
   }
 
@@ -291,7 +268,54 @@ export class Ravn {
   }
 }
 
-function describePlan(plan: AnswerPlan): string {
+/** Ravn's reply to an answer: its code, and the paths a contract refusal names. Never a value. */
+export interface AnswerReply {
+  status: number | null;
+  code: string;
+  paths?: string[];
+  replayed?: boolean;
+}
+
+/**
+ * A reply that is not JSON falls back to `http-<status>`, with a warning that
+ * names the status and content type. ❗Never the body: what a proxy or an
+ * error page put there is not ours to log.
+ */
+export async function readAnswerReply(
+  res: Response,
+  warn: (line: string) => void = (line) => console.warn(line),
+): Promise<AnswerReply> {
+  let json: Record<string, unknown> = {};
+  try {
+    const parsed: unknown = await res.json();
+    if (parsed && typeof parsed === "object") json = parsed as Record<string, unknown>;
+  } catch {
+    const type = (res.headers.get("content-type") ?? "none")
+      .replace(/[^\x20-\x7e]/g, "?")
+      .slice(0, 100);
+    warn(`answer: Ravn replied ${res.status} with a body that is not JSON (content-type: ${type})`);
+  }
+  const code =
+    typeof json.answer === "string"
+      ? json.answer
+      : typeof json.code === "string"
+        ? json.code
+        : `http-${res.status}`;
+  const paths = Array.isArray(json.paths)
+    ? json.paths
+        .filter((p): p is string => typeof p === "string")
+        .slice(0, 50)
+        .map((p) => p.slice(0, 200))
+    : undefined;
+  return {
+    status: res.status,
+    code,
+    ...(paths ? { paths } : {}),
+    ...(json.replayed === true ? { replayed: true } : {}),
+  };
+}
+
+export function describePlan(plan: AnswerPlan): string {
   if (plan.kind === "never") return "never";
   if (plan.invalid) return "invalid";
   return plan.delayMs > 0 ? `late ${plan.delayMs}ms` : "now";

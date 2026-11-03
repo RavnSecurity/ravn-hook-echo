@@ -44,6 +44,16 @@ export class FakeRavn {
   private readonly accepted = new Map<string, string>();
   private close_: () => Promise<void> = async () => {};
 
+  /** Answer tokens Ravn minted (`Ravn-Answer-Token`) → the stage run each is for. */
+  private readonly answerTokens = new Map<string, string>();
+
+  /** A token as Ravn mints one for its echo hook: opaque, `<payload>.<mac>`, good for one run. */
+  newAnswerToken(stageRunId: string): string {
+    const t = `${randomBytes(18).toString("base64url")}.${randomBytes(32).toString("base64url")}`;
+    this.answerTokens.set(t, stageRunId);
+    return t;
+  }
+
   newUnwrapToken(): string {
     const t = `rvu_${SECRET_MARK}-${randomBytes(6).toString("hex")}`;
     this.unwrap.add(t);
@@ -127,12 +137,21 @@ export class FakeRavn {
     }
 
     if (req.url === "/api/connect/hooks/v1/answers") {
-      if (!this.access.has(bearer)) {
+      // The Ravn echo's scheme: a token Ravn minted for one stage run.
+      const answerToken = /^RavnAnswer (.+)$/.exec(req.headers.authorization ?? "")?.[1];
+      if (answerToken !== undefined) {
+        const run = this.answerTokens.get(answerToken);
+        const body = json as AnswerCall["body"];
+        if (run === undefined || run !== body.stageRunId) {
+          this.answers.push({ token: answerToken, body, status: 401, code: "unauthorized" });
+          return problem(401, "unauthorized");
+        }
+      } else if (!this.access.has(bearer)) {
         return problem(401, "unauthorized");
       }
       const body = json as AnswerCall["body"];
       const record = (status: number, code: string, extra: Record<string, unknown> = {}) => {
-        this.answers.push({ token: bearer, body, status, code });
+        this.answers.push({ token: answerToken ?? bearer, body, status, code });
         return status === 200
           ? { status, body: { answer: code, stage: stageOf(body.stageRunId), ...extra } }
           : problem(status, code, extra);
